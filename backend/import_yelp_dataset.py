@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from database import SessionLocal
 from models.restaurant import Restaurant
 
-# Path to the Yelp dataset tar (in lab-1/datasets/Yelp JSON/)
+# Path to the Yelp dataset tar
 YELP_TAR_PATH = os.path.join(os.path.dirname(__file__), "..", "datasets", "Yelp JSON", "yelp_dataset.tar")
 BUSINESS_JSON = "yelp_academic_dataset_business.json"
 
@@ -95,7 +95,7 @@ def yelp_to_restaurant(row):
 def run_import(limit=5000, state_filter=None):
     if not os.path.exists(YELP_TAR_PATH):
         print(f"Error: {YELP_TAR_PATH} not found.")
-        print("Make sure 'datasets/Yelp JSON/yelp_dataset.tar' exists in the lab-1 folder.")
+        print("Make sure 'datasets/Yelp JSON/yelp_dataset.tar' exists in the project folder.")
         return
 
     db = SessionLocal()

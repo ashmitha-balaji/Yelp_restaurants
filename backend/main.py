@@ -37,6 +37,19 @@ app.include_router(history.router)
 app.include_router(ai_assistant.router)
 
 
+@app.on_event("startup")
+def startup_ai_check():
+    from services import ai_service
+    if not ai_service.llm and ai_service.GROQ_API_KEY:
+        try:
+            from langchain_groq import ChatGroq
+            ai_service.llm = ChatGroq(
+                model="llama-3.3-70b-versatile", temperature=0.7, api_key=ai_service.GROQ_API_KEY
+            )
+        except Exception:
+            pass
+
+
 @app.get("/")
 def root():
     return {"message": "Yelp Prototype API", "docs": "/docs"}
@@ -49,7 +62,6 @@ def health_check():
 
 @app.get("/health/db")
 def health_check_db():
-    """Check if database connection works."""
     try:
         from sqlalchemy import text
         from database import engine

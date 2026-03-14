@@ -1,7 +1,7 @@
 # Backend
 backend/.env
 backend/venv/
-backend/__pycache__/
+backend/**/__pycache__/
 backend/uploads/
 
 # Frontend
