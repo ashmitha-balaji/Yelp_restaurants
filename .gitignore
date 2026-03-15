@@ -7,7 +7,7 @@ backend/uploads/
 # Frontend
 frontend/node_modules/
 
-# Datasets (large files - do not push to git)
+# Datasets (large files)
 datasets/
 
 # OS
