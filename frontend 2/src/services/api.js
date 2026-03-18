@@ -88,6 +88,14 @@ const getCached = (key) => {
 };
 
 export const restaurantAPI = {
+  searchYelp: async (params) => {
+    const key = getCacheKey({ yelp: true, ...params });
+    const cached = getCached(key);
+    if (cached) return { data: cached };
+    const res = await api.get('/restaurants/yelp', { params });
+    searchCache.set(key, { data: res.data.restaurants || res.data, timestamp: Date.now() });
+    return res;
+  },
   search: async (params) => {
     const key = getCacheKey(params);
     const cached = getCached(key);

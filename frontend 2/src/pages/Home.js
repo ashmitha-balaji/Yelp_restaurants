@@ -26,16 +26,39 @@ export default function Home() {
   const fetchRestaurants = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (search) params.keyword = search; // keyword searches name, description, cuisine_type, amenities, ambiance
-      if (location) params.city = location;
-      if (filters.cuisine_type) params.cuisine_type = filters.cuisine_type;
-      if (filters.city) params.city = filters.city || location;
-      if (filters.price_range) params.price_range = filters.price_range;
-      const res = await restaurantAPI.search(params);
-      setRestaurants(res.data);
+      // Build Yelp params
+      const term = search || filters.cuisine_type || 'restaurants';
+      const city =
+        (filters.city && filters.city.trim()) ||
+        (location && location.trim()) ||
+        'San Jose, CA';
+  
+      const res = await restaurantAPI.searchYelp({
+        term,
+        city,
+        limit: 20,
+      });
+  
+      // Backend returns { restaurants: [...] }
+      setRestaurants(res.data.restaurants || res.data || []);
     } catch (err) {
-      console.error('Failed to fetch restaurants:', err);
+      console.error('Failed to load Yelp restaurants:', err);
+  
+      // Optional fallback to your own DB if Yelp fails
+      try {
+        const params = {};
+        if (search) params.keyword = search;
+        if (location) params.city = location;
+        if (filters.cuisine_type) params.cuisine_type = filters.cuisine_type;
+        if (filters.city) params.city = filters.city || location;
+        if (filters.price_range) params.price_range = filters.price_range;
+  
+        const res = await restaurantAPI.search(params);
+        setRestaurants(res.data || []);
+      } catch (fallbackErr) {
+        console.error('Fallback DB search failed:', fallbackErr);
+        setRestaurants([]);
+      }
     }
     setLoading(false);
   }, [search, location, filters]);
