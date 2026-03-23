@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from database import engine, Base
 from config import UPLOAD_DIR
-from routers import auth, users, restaurants, reviews, favorites, ai_assistant, history,yelp
+from routers import auth, users, restaurants, reviews, favorites, ai_assistant, history, yelp, owner_dashboard
 
 Base.metadata.create_all(bind=engine)
 
@@ -36,6 +36,7 @@ app.include_router(reviews.router)
 app.include_router(favorites.router)
 app.include_router(history.router)
 app.include_router(ai_assistant.router)
+app.include_router(owner_dashboard.router)
 
 @app.on_event("startup")
 def startup_ai_check():

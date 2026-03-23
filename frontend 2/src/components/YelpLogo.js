@@ -1,9 +1,9 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 
-export default function YelpLogo({ className = '' }) {
+export default function YelpLogo({ className = '', to = '/', onClick }) {
   return (
-    <Link to="/" className={`flex items-center gap-1.5 ${className}`}>
+    <Link to={to} onClick={onClick} className={`flex items-center gap-1.5 ${className}`}>
       {/* Yelp burst logo - simplified red burst */}
       <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="shrink-0">
         <path d="M16 2L18 8L16 14L14 8L16 2Z" fill="#d32323"/>

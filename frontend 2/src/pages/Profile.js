@@ -16,6 +16,7 @@ export default function Profile() {
   });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -68,13 +69,18 @@ export default function Profile() {
       <div className="bg-white rounded-2xl shadow-sm p-8">
         <div className="flex items-center space-x-6 mb-8">
           <div className="relative">
-            <div className="w-24 h-24 rounded-full bg-gray-200 overflow-hidden flex items-center justify-center">
+            <button
+              type="button"
+              onClick={() => user?.profile_picture && setPreviewOpen(true)}
+              className={`w-24 h-24 rounded-full bg-gray-200 overflow-hidden flex items-center justify-center ${user?.profile_picture ? 'cursor-zoom-in' : ''}`}
+              title={user?.profile_picture ? 'Click to view full photo' : 'Upload a profile photo'}
+            >
               {user?.profile_picture ? (
                 <img src={`${API_BASE}${user.profile_picture}`} alt="Profile" className="w-full h-full object-cover" />
               ) : (
                 <span className="text-3xl font-bold text-gray-400">{user?.name?.charAt(0)?.toUpperCase()}</span>
               )}
-            </div>
+            </button>
             <label className="absolute bottom-0 right-0 bg-yelp-red text-white p-2 rounded-full cursor-pointer hover:bg-yelp-dark transition">
               <FiCamera size={14} />
               <input type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
@@ -146,6 +152,21 @@ export default function Profile() {
           </button>
         </form>
       </div>
+
+      {previewOpen && user?.profile_picture && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          onClick={() => setPreviewOpen(false)}
+        >
+          <div className="bg-white rounded-2xl p-3 max-w-3xl w-full" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={`${API_BASE}${user.profile_picture}`}
+              alt="Profile large preview"
+              className="w-full max-h-[80vh] object-contain rounded-xl"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

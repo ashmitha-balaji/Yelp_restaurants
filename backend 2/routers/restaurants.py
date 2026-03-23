@@ -17,7 +17,8 @@ router = APIRouter(prefix="/restaurants", tags=["Restaurants"])
 @router.post("/", response_model=RestaurantResponse, status_code=201)
 def create_restaurant(data: RestaurantCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     restaurant = Restaurant(
-        owner_id=current_user.id if current_user.role == "owner" else None,
+        # Record who added the restaurant for history tracking (owner or regular user).
+        owner_id=current_user.id,
         **data.model_dump(),
     )
     db.add(restaurant)

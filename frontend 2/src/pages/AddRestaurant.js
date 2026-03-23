@@ -54,10 +54,31 @@ export default function AddRestaurant() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Price Range</label>
-              <select name="price_range" value={form.price_range} onChange={handleChange} className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-yelp-red">
-                <option value="">Select price range...</option>
-                {PRICES.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
+              <div className="flex flex-wrap gap-2">
+                {PRICES.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setForm({ ...form, price_range: p })}
+                    className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${
+                      form.price_range === p
+                        ? 'bg-yelp-red text-white border-yelp-red'
+                        : 'bg-white text-gray-700 border-gray-300 hover:border-yelp-red hover:text-yelp-red'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+                {form.price_range && (
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, price_range: '' })}
+                    className="px-3 py-2 text-xs font-medium text-gray-500 hover:text-yelp-red"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 

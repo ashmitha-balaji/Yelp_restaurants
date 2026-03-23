@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
@@ -10,6 +10,7 @@ import Signup from './pages/Signup';
 import Profile from './pages/Profile';
 import Preferences from './pages/Preferences';
 import RestaurantDetails from './pages/RestaurantDetails';
+import YelpRestaurantDetails from './pages/YelpRestaurantDetails';
 import AddRestaurant from './pages/AddRestaurant';
 import WriteReview from './pages/WriteReview';
 import Favorites from './pages/Favorites';
@@ -23,9 +24,20 @@ function PrivateRoute({ children }) {
   return user ? children : <Navigate to="/login" />;
 }
 
+function ScrollToTopOnRouteChange() {
+  const { pathname, search } = useLocation();
+
+  React.useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [pathname, search]);
+
+  return null;
+}
+
 function AppRoutes() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
+      <ScrollToTopOnRouteChange />
       <Navbar />
       <main className="flex-1">
       <Routes>
@@ -33,9 +45,11 @@ function AppRoutes() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/restaurant/:id" element={<RestaurantDetails />} />
+        <Route path="/restaurant/yelp/:yelpId" element={<YelpRestaurantDetails />} />
         <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
         <Route path="/preferences" element={<PrivateRoute><Preferences /></PrivateRoute>} />
         <Route path="/add-restaurant" element={<PrivateRoute><AddRestaurant /></PrivateRoute>} />
+        <Route path="/write-review" element={<PrivateRoute><WriteReview /></PrivateRoute>} />
         <Route path="/write-review/:restaurantId" element={<PrivateRoute><WriteReview /></PrivateRoute>} />
         <Route path="/favorites" element={<PrivateRoute><Favorites /></PrivateRoute>} />
         <Route path="/my-reviews" element={<PrivateRoute><MyReviews /></PrivateRoute>} />

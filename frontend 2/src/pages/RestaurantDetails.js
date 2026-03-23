@@ -1,27 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { restaurantAPI, reviewAPI, favoriteAPI, API_BASE } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { StarDisplay } from '../components/StarRating';
-import ReviewForm from '../components/ReviewForm';
 import { getRestaurantImageUrl } from '../utils/placeholderImages';
 import { FiHeart, FiMapPin, FiPhone, FiGlobe, FiClock, FiEdit2, FiTrash2, FiDollarSign, FiCheckCircle, FiFlag } from 'react-icons/fi';
 
 export default function RestaurantDetails() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [restaurant, setRestaurant] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [isFavorite, setIsFavorite] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [showReviewForm, setShowReviewForm] = useState(false);
-  const [editingReviewId, setEditingReviewId] = useState(null);
   const [claiming, setClaiming] = useState(false);
   const [claimMsg, setClaimMsg] = useState('');
 
   useEffect(() => {
     const fetchData = async () => {
       try {
+        restaurantAPI.trackView(id).catch(() => {});
         const [restRes, revRes] = await Promise.all([
           restaurantAPI.getById(id),
           reviewAPI.getForRestaurant(id),
@@ -79,31 +78,6 @@ export default function RestaurantDetails() {
     } catch (err) {
       console.error('Failed to delete review:', err);
     }
-  };
-
-  const handleReviewSubmit = async (rating, comment) => {
-    try {
-      if (editingReviewId) {
-        await reviewAPI.update(editingReviewId, { rating, comment });
-        setReviews((prev) =>
-          prev.map((r) => (r.id === editingReviewId ? { ...r, rating, comment } : r))
-        );
-      } else {
-        const res = await reviewAPI.create({ restaurant_id: parseInt(id), rating, comment });
-        setReviews((prev) => [...prev, res.data]);
-      }
-      setShowReviewForm(false);
-      setEditingReviewId(null);
-      const restRes = await restaurantAPI.getById(id);
-      setRestaurant(restRes.data);
-    } catch (err) {
-      throw err;
-    }
-  };
-
-  const handleEditReview = (review) => {
-    setEditingReviewId(review.id);
-    setShowReviewForm(true);
   };
 
   const myReview = reviews.find((r) => r.user_id === user?.id);
@@ -172,13 +146,10 @@ export default function RestaurantDetails() {
                   }`}
                 >
                   <FiHeart size={16} className={isFavorite ? 'fill-yelp-red' : ''} />
-                  <span className="text-sm font-medium">{isFavorite ? 'Saved' : 'Save'}</span>
+                  <span className="text-sm font-medium">{isFavorite ? 'Favourited' : 'Favourites'}</span>
                 </button>
                 <button
-                  onClick={() => {
-                    setEditingReviewId(null);
-                    setShowReviewForm(!showReviewForm);
-                  }}
+                  onClick={() => navigate(`/write-review/${id}${myReview ? `?edit=${myReview.id}` : ''}`)}
                   className="flex items-center space-x-2 bg-yelp-red text-white px-4 py-2 rounded-lg hover:bg-yelp-dark transition text-sm font-medium"
                 >
                   <FiEdit2 size={16} /><span>{myReview ? 'Edit Review' : 'Write Review'}</span>
@@ -249,29 +220,15 @@ export default function RestaurantDetails() {
       <div className="mt-8">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold text-gray-900">Reviews ({reviews.length})</h2>
-          {user && !showReviewForm && (
+          {user && (
             <button
-              onClick={() => {
-                setEditingReviewId(null);
-                setShowReviewForm(true);
-              }}
+              onClick={() => navigate(`/write-review/${id}${myReview ? `?edit=${myReview.id}` : ''}`)}
               className="text-sm font-medium text-yelp-red hover:underline"
             >
               {myReview ? 'Edit Review' : 'Write a Review'}
             </button>
           )}
         </div>
-        {showReviewForm && (
-          <ReviewForm
-            initialRating={reviews.find((r) => r.id === editingReviewId)?.rating}
-            initialComment={reviews.find((r) => r.id === editingReviewId)?.comment || ''}
-            onSubmit={handleReviewSubmit}
-            onCancel={() => {
-              setShowReviewForm(false);
-              setEditingReviewId(null);
-            }}
-          />
-        )}
         {reviews.length > 0 ? (
           <div className="space-y-4">
             {reviews.map((review) => (
@@ -293,9 +250,9 @@ export default function RestaurantDetails() {
                   </div>
                   {user && review.user_id === user.id && (
                     <div className="flex space-x-2">
-                      <button onClick={() => handleEditReview(review)} className="text-gray-400 hover:text-yelp-red p-1">
+                      <Link to={`/write-review/${id}?edit=${review.id}`} className="text-gray-400 hover:text-yelp-red p-1">
                         <FiEdit2 size={16} />
-                      </button>
+                      </Link>
                       <button onClick={() => handleDeleteReview(review.id)} className="text-gray-400 hover:text-red-600 p-1">
                         <FiTrash2 size={16} />
                       </button>
@@ -309,9 +266,9 @@ export default function RestaurantDetails() {
         ) : (
           <div className="bg-white rounded-xl shadow-sm p-8 text-center">
             <p className="text-gray-500">No reviews yet. Be the first to review!</p>
-            {user && !showReviewForm && (
+            {user && (
               <button
-                onClick={() => setShowReviewForm(true)}
+                onClick={() => navigate(`/write-review/${id}`)}
                 className="inline-block mt-4 bg-yelp-red text-white px-6 py-2 rounded-lg hover:bg-yelp-dark transition text-sm font-medium"
               >
                 Write a Review

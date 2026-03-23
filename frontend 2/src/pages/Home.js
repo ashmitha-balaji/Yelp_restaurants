@@ -3,77 +3,128 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { restaurantAPI } from '../services/api';
 import RestaurantCard from '../components/RestaurantCard';
 import RestaurantCardSkeleton from '../components/RestaurantCardSkeleton';
-import CategoriesGrid from '../components/CategoriesGrid';
-import ExploreCities from '../components/ExploreCities';
 import RecentActivity from '../components/RecentActivity';
 import { useAuth } from '../context/AuthContext';
 import { FiSearch, FiFilter, FiMapPin, FiClock, FiDollarSign, FiList } from 'react-icons/fi';
 
 const CUISINES = ['Italian', 'Chinese', 'Mexican', 'Indian', 'Japanese', 'American', 'Thai', 'French', 'Mediterranean', 'Korean'];
+const HERO_IMAGES = [
+  'https://images.unsplash.com/photo-1544025162-d76694265947?w=1600&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1600&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=1600&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=1600&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1559339352-11d035aa65de?w=1600&auto=format&fit=crop',
+];
 
 export default function Home() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [restaurants, setRestaurants] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState(searchParams.get('search') || '');
-  const [location, setLocation] = useState(searchParams.get('location') || '');
+  const [heroImageIndex, setHeroImageIndex] = useState(0);
+  const [search, setSearch] = useState('');
+  const [location, setLocation] = useState('');
   const [filters, setFilters] = useState({ cuisine_type: '', city: '', price_range: '' });
   const [showFilters, setShowFilters] = useState(false);
 
   const priceOptions = ['$', '$$', '$$$', '$$$$'];
 
+  const scrollToResults = () => {
+    const resultsEl = document.getElementById('restaurant-results');
+    if (resultsEl) {
+      resultsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   const fetchRestaurants = useCallback(async () => {
     setLoading(true);
-    try {
-      // Build Yelp params
-      const term = search || filters.cuisine_type || 'restaurants';
-      const city =
-        (filters.city && filters.city.trim()) ||
-        (location && location.trim()) ||
-        'San Jose, CA';
-  
-      const res = await restaurantAPI.searchYelp({
+    // Build Yelp params
+    const term = search || filters.cuisine_type || 'restaurants';
+    const city =
+      (filters.city && filters.city.trim()) ||
+      (location && location.trim()) ||
+      'San Jose, CA';
+
+    const localParams = {};
+    if (search) localParams.keyword = search;
+    if (location) localParams.city = location;
+    if (filters.cuisine_type) localParams.cuisine_type = filters.cuisine_type;
+    if (filters.city) localParams.city = filters.city || location;
+    if (filters.price_range) localParams.price_range = filters.price_range;
+
+    const [yelpResult, localResult] = await Promise.allSettled([
+      restaurantAPI.searchYelp({
         term,
         city,
-        limit: 20,
-      });
-  
-      // Backend returns { restaurants: [...] }
-      setRestaurants(res.data.restaurants || res.data || []);
-    } catch (err) {
-      console.error('Failed to load Yelp restaurants:', err);
-  
-      // Optional fallback to your own DB if Yelp fails
-      try {
-        const params = {};
-        if (search) params.keyword = search;
-        if (location) params.city = location;
-        if (filters.cuisine_type) params.cuisine_type = filters.cuisine_type;
-        if (filters.city) params.city = filters.city || location;
-        if (filters.price_range) params.price_range = filters.price_range;
-  
-        const res = await restaurantAPI.search(params);
-        setRestaurants(res.data || []);
-      } catch (fallbackErr) {
-        console.error('Fallback DB search failed:', fallbackErr);
-        setRestaurants([]);
-      }
+        limit: 50,
+      }),
+      restaurantAPI.search(localParams),
+    ]);
+
+    let yelpRestaurants = [];
+    let localRestaurants = [];
+
+    if (yelpResult.status === 'fulfilled') {
+      yelpRestaurants = yelpResult.value.data.restaurants || yelpResult.value.data || [];
+    } else {
+      console.error('Failed to load Yelp restaurants:', yelpResult.reason);
     }
+
+    if (localResult.status === 'fulfilled') {
+      localRestaurants = localResult.value.data || [];
+    } else {
+      console.error('Failed to load local restaurants:', localResult.reason);
+    }
+
+    // Prefer Yelp entries with images, but always include owner-added local restaurants.
+    const yelpWithImages = yelpRestaurants.filter((r) => !!r.image_url);
+    const yelpWithoutImages = yelpRestaurants.filter((r) => !r.image_url);
+    const combined = [...yelpWithImages, ...localRestaurants, ...yelpWithoutImages];
+
+    const seen = new Set();
+    const deduped = combined.filter((r) => {
+      const key = r.yelp_id
+        ? `yelp:${r.yelp_id}`
+        : `local:${(r.name || '').trim().toLowerCase()}|${(r.city || '').trim().toLowerCase()}|${(r.address || '').trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    setRestaurants(deduped.slice(0, 20));
     setLoading(false);
   }, [search, location, filters]);
 
   useEffect(() => {
-    const urlSearch = searchParams.get('search');
-    const urlLocation = searchParams.get('location');
-    if (urlSearch) setSearch(urlSearch);
-    if (urlLocation) setLocation(urlLocation);
-  }, [searchParams]);
+    // Always reset to defaults on a fresh page load/refresh.
+    setSearch('');
+    setLocation('');
+    if (searchParams.get('search') || searchParams.get('location')) {
+      setSearchParams({}, { replace: true });
+    }
+  }, []);
+
+  useEffect(() => {
+    // Reset homepage state when logo sends a reset query.
+    if (!searchParams.get('reset')) return;
+    setSearch('');
+    setLocation('');
+    setFilters({ cuisine_type: '', city: '', price_range: '' });
+    setShowFilters(false);
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     const timer = setTimeout(fetchRestaurants, 400);
     return () => clearTimeout(timer);
   }, [fetchRestaurants]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setHeroImageIndex((prev) => (prev + 1) % HERO_IMAGES.length);
+    }, 2500);
+    return () => clearInterval(interval);
+  }, []);
 
   const clearFilters = () => {
     setFilters({ cuisine_type: '', city: '', price_range: '' });
@@ -88,31 +139,35 @@ export default function Home() {
     <div className="min-h-screen flex flex-col bg-white">
       {/* Hero Section - Yelp "Top 100 Places to Eat" style */}
       <section className="relative bg-gray-900 overflow-hidden">
+        <div className="absolute inset-0">
+          {HERO_IMAGES.map((imageUrl, idx) => (
+            <div
+              key={imageUrl}
+              className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ${idx === heroImageIndex ? 'opacity-60' : 'opacity-0'}`}
+              style={{ backgroundImage: `url('${imageUrl}')` }}
+            />
+          ))}
+        </div>
         <div className="absolute inset-0 bg-gradient-to-r from-gray-900 via-gray-800 to-transparent z-10" />
-        <div
-          className="absolute inset-0 bg-cover bg-center opacity-60"
-          style={{
-            backgroundImage: "url('https://images.unsplash.com/photo-1544025162-d76694265947?w=1200')",
-          }}
-        />
         <div className="relative z-20 max-w-7xl mx-auto px-4 py-20 md:py-28">
           <div className="max-w-xl">
             <h1 className="text-4xl md:text-5xl font-bold text-white mb-6">
-              Top 100 Places to Eat in 2026
+              Top Places to Eat in 2026
             </h1>
-            <Link
-              to="/"
+            <button
+              type="button"
+              onClick={scrollToResults}
               className="inline-flex items-center gap-2 bg-yelp-red text-white px-6 py-3 rounded-lg font-semibold hover:bg-yelp-dark transition"
             >
               <FiList size={20} /> See list
-            </Link>
+            </button>
             <p className="text-white/80 text-sm mt-6">Fat Of The Land • Photo from the business owner</p>
           </div>
         </div>
       </section>
 
       {/* Search & Filters bar */}
-      <section className="bg-white border-b border-gray-200 sticky top-[7.5rem] z-40">
+      <section className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex flex-col md:flex-row gap-4">
             <form
@@ -201,14 +256,11 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Categories - Yelp style */}
-      <CategoriesGrid />
-
       {/* Main content */}
       <div className="flex-1 flex min-h-0 bg-gray-50">
         <div className="flex-1 overflow-auto w-full">
           {/* Restaurant results */}
-          <div className="max-w-5xl mx-auto px-4 py-8">
+          <div id="restaurant-results" className="max-w-5xl mx-auto px-4 py-8">
             {loading ? (
               <div className="space-y-6">
                 {[1, 2, 3, 4, 5].map((i) => <RestaurantCardSkeleton key={i} />)}
@@ -246,9 +298,6 @@ export default function Home() {
               </div>
             )}
           </div>
-
-          {/* Explore searches in popular cities */}
-          <ExploreCities />
 
           {/* Recent Activity */}
           <RecentActivity />

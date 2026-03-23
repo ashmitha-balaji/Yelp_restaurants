@@ -1,13 +1,31 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { restaurantAPI, reviewAPI } from '../services/api';
+import { ownerDashboardAPI, restaurantAPI, reviewAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { StarDisplay } from '../components/StarRating';
+import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
 import {
-  FiGrid, FiStar, FiEye, FiMessageSquare, FiPlusCircle,
-  FiEdit2, FiSave, FiX, FiTrendingUp, FiCalendar, FiMapPin,
-  FiPhone, FiGlobe, FiClock, FiDollarSign,
+  FiGrid, FiPlusCircle, FiEdit2, FiSave, FiX, FiCalendar, FiMapPin,
+  FiPhone, FiGlobe, FiClock, FiDollarSign, FiBarChart2,
 } from 'react-icons/fi';
+
+const CITY_COORDINATES = {
+  'san jose': [37.3382, -121.8863],
+  'milpitas': [37.4323, -121.8996],
+  'fremont': [37.5483, -121.9886],
+  'santa clara': [37.3541, -121.9552],
+  'sunnyvale': [37.3688, -122.0363],
+  'cupertino': [37.3230, -122.0322],
+  'mountain view': [37.3861, -122.0839],
+  'palo alto': [37.4419, -122.1430],
+  'newark': [37.5297, -122.0402],
+  'union city': [37.5934, -122.0438],
+};
+
+const normalizeCityKey = (city = '') => city.trim().toLowerCase().replace(/\s+/g, ' ');
+
+const getCityCoordinates = (city) => CITY_COORDINATES[normalizeCityKey(city)] || null;
 
 function EditRestaurantModal({ restaurant, onClose, onSave }) {
   const [form, setForm] = useState({
@@ -174,7 +192,18 @@ export default function OwnerDashboard() {
   const [restaurants, setRestaurants] = useState([]);
   const [selectedRestaurant, setSelectedRestaurant] = useState(null);
   const [reviews, setReviews] = useState([]);
+  const [ownerReviews, setOwnerReviews] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsRestaurantId, setAnalyticsRestaurantId] = useState('all');
+  const [reviewFilters, setReviewFilters] = useState({
+    restaurant_id: 'all',
+    rating: 'all',
+    sort_by: 'newest',
+    search: '',
+  });
+  const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [editingRestaurant, setEditingRestaurant] = useState(null);
 
   useEffect(() => {
@@ -197,10 +226,49 @@ export default function OwnerDashboard() {
 
   useEffect(() => { fetchReviews(); }, [fetchReviews]);
 
-  const totalReviews = restaurants.reduce((sum, r) => sum + (r.review_count || 0), 0);
-  const avgRating = restaurants.length > 0
-    ? (restaurants.reduce((sum, r) => sum + (r.average_rating || 0), 0) / restaurants.length).toFixed(1)
-    : '0.0';
+  useEffect(() => {
+    const fetchOwnerReviews = async () => {
+      if (!restaurants.length) {
+        setOwnerReviews([]);
+        return;
+      }
+
+      try {
+        const params = {};
+        if (reviewFilters.restaurant_id !== 'all') params.restaurant_id = Number(reviewFilters.restaurant_id);
+        if (reviewFilters.rating !== 'all') params.rating = Number(reviewFilters.rating);
+        if (reviewFilters.sort_by) params.sort_by = reviewFilters.sort_by;
+        if (reviewFilters.search.trim()) params.search = reviewFilters.search.trim();
+        const res = await ownerDashboardAPI.getReviews(params);
+        setOwnerReviews(res.data?.reviews || []);
+      } catch {
+        setOwnerReviews([]);
+      }
+    };
+
+    fetchOwnerReviews();
+  }, [restaurants, reviewFilters]);
+
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      if (!restaurants.length) {
+        setAnalytics(null);
+        return;
+      }
+      setAnalyticsLoading(true);
+      try {
+        const params = {};
+        if (analyticsRestaurantId !== 'all') params.restaurant_id = Number(analyticsRestaurantId);
+        const res = await ownerDashboardAPI.getAnalytics(params);
+        setAnalytics(res.data);
+      } catch {
+        setAnalytics(null);
+      }
+      setAnalyticsLoading(false);
+    };
+
+    fetchAnalytics();
+  }, [restaurants, analyticsRestaurantId]);
 
   const ratingDistribution = [5, 4, 3, 2, 1].map((star) => ({
     star,
@@ -210,9 +278,34 @@ export default function OwnerDashboard() {
 
   const recentReviews = [...reviews].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
 
-  const avgReviewLength = reviews.length > 0
-    ? Math.round(reviews.reduce((sum, r) => sum + (r.comment?.length || 0), 0) / reviews.length)
-    : 0;
+  const analyticsScopeRestaurants = analyticsRestaurantId === 'all'
+    ? restaurants
+    : restaurants.filter((r) => String(r.id) === String(analyticsRestaurantId));
+
+  const cityPointsByKey = analyticsScopeRestaurants.reduce((acc, r) => {
+    const cityLabel = (r.city || '').trim();
+    if (!cityLabel) return acc;
+    const coords = getCityCoordinates(cityLabel);
+    if (!coords) return acc;
+    const key = normalizeCityKey(cityLabel);
+    if (!acc[key]) {
+      acc[key] = { key, city: cityLabel, coords, restaurants: [] };
+    }
+    acc[key].restaurants.push(r);
+    return acc;
+  }, {});
+
+  const mappedCityPoints = Object.values(cityPointsByKey);
+
+  const unmappedCities = [...new Set(
+    analyticsScopeRestaurants
+      .map((r) => (r.city || '').trim())
+      .filter((city) => city && !getCityCoordinates(city))
+  )];
+
+  const mapCenter = mappedCityPoints.length > 0
+    ? mappedCityPoints[0].coords
+    : CITY_COORDINATES['san jose'];
 
   const handleSaveRestaurant = (updated) => {
     setRestaurants((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
@@ -254,47 +347,194 @@ export default function OwnerDashboard() {
         </Link>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
-          <div className="flex items-center space-x-3">
-            <div className="bg-blue-50 p-3 rounded-lg"><FiEye className="text-blue-600" size={22} /></div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Restaurants</p>
-              <p className="text-2xl font-bold text-gray-900">{restaurants.length}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
-          <div className="flex items-center space-x-3">
-            <div className="bg-yellow-50 p-3 rounded-lg"><FiStar className="text-yellow-600" size={22} /></div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Avg Rating</p>
-              <p className="text-2xl font-bold text-gray-900">{avgRating}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
-          <div className="flex items-center space-x-3">
-            <div className="bg-green-50 p-3 rounded-lg"><FiMessageSquare className="text-green-600" size={22} /></div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Total Reviews</p>
-              <p className="text-2xl font-bold text-gray-900">{totalReviews}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
-          <div className="flex items-center space-x-3">
-            <div className="bg-purple-50 p-3 rounded-lg"><FiTrendingUp className="text-purple-600" size={22} /></div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Avg Review Length</p>
-              <p className="text-2xl font-bold text-gray-900">{avgReviewLength}<span className="text-sm font-normal text-gray-400"> chars</span></p>
-            </div>
-          </div>
-        </div>
+      <div className="flex items-center gap-2 mb-6">
+        {['overview', 'reviews', 'analytics'].map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold capitalize transition ${
+              activeTab === tab
+                ? 'bg-yelp-red text-white'
+                : 'bg-white border border-gray-200 text-gray-700 hover:border-yelp-red hover:text-yelp-red'
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
       </div>
 
-      {restaurants.length > 0 ? (
+      {activeTab === 'reviews' && (
+        <div className="bg-white rounded-xl border border-gray-100 p-5 mb-8">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Reviews Dashboard (Read-only)</h2>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+            <select
+              value={reviewFilters.restaurant_id}
+              onChange={(e) => setReviewFilters((prev) => ({ ...prev, restaurant_id: e.target.value }))}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="all">All restaurants</option>
+              {restaurants.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+            <select
+              value={reviewFilters.rating}
+              onChange={(e) => setReviewFilters((prev) => ({ ...prev, rating: e.target.value }))}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="all">All ratings</option>
+              {[5, 4, 3, 2, 1].map((r) => <option key={r} value={r}>{r} stars</option>)}
+            </select>
+            <select
+              value={reviewFilters.sort_by}
+              onChange={(e) => setReviewFilters((prev) => ({ ...prev, sort_by: e.target.value }))}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="rating_high">Highest rating</option>
+              <option value="rating_low">Lowest rating</option>
+            </select>
+            <input
+              value={reviewFilters.search}
+              onChange={(e) => setReviewFilters((prev) => ({ ...prev, search: e.target.value }))}
+              placeholder="Search comments..."
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          {ownerReviews.length > 0 ? (
+            <div className="space-y-3">
+              {ownerReviews.map((review) => (
+                <div key={review.id} className="border border-gray-100 rounded-lg p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-gray-800">{review.restaurant_name || 'Restaurant'}</p>
+                    <span className="text-xs text-gray-400">{review.created_at ? new Date(review.created_at).toLocaleDateString() : ''}</span>
+                  </div>
+                  <div className="mt-1"><StarDisplay rating={review.rating} size={12} showNumber={false} /></div>
+                  <p className="text-xs text-gray-500 mt-1">by {review.user_name || 'Anonymous'}</p>
+                  {review.comment && <p className="text-sm text-gray-700 mt-2">{review.comment}</p>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">No reviews found for the current filters.</p>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'analytics' && (
+        <div className="space-y-6 mb-8">
+          <div className="bg-white rounded-xl border border-gray-100 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Owner Analytics Dashboard</h2>
+              <select
+                value={analyticsRestaurantId}
+                onChange={(e) => setAnalyticsRestaurantId(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="all">All restaurants</option>
+                {restaurants.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+            {analyticsLoading || !analytics ? (
+              <p className="text-sm text-gray-500">Loading analytics...</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-blue-50 rounded-lg p-4"><p className="text-xs text-blue-700">Total Views</p><p className="text-2xl font-bold text-blue-900">{analytics.totals?.views || 0}</p></div>
+                  <div className="bg-yellow-50 rounded-lg p-4"><p className="text-xs text-yellow-700">Avg Rating</p><p className="text-2xl font-bold text-yellow-900">{analytics.totals?.avg_rating || 0}</p></div>
+                  <div className="bg-green-50 rounded-lg p-4"><p className="text-xs text-green-700">Total Reviews</p><p className="text-2xl font-bold text-green-900">{analytics.totals?.reviews || 0}</p></div>
+                  <div className="bg-purple-50 rounded-lg p-4"><p className="text-xs text-purple-700">Sentiment Score</p><p className="text-2xl font-bold text-purple-900">{analytics.sentiment?.overall_score || 0}</p></div>
+                </div>
+
+                <div className="bg-white border border-gray-100 rounded-lg p-4 mb-4">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                    <FiMapPin /> Restaurant Location Map
+                  </h3>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Zoom and pan to explore where your restaurants are located across San Jose and nearby cities.
+                  </p>
+                  <div className="rounded-lg overflow-hidden border border-gray-200">
+                    <MapContainer
+                      center={mapCenter}
+                      zoom={10}
+                      minZoom={8}
+                      maxZoom={15}
+                      scrollWheelZoom
+                      style={{ height: '360px', width: '100%' }}
+                      className="z-0"
+                    >
+                      <TileLayer
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      />
+                      {mappedCityPoints.map((point) => (
+                        <CircleMarker
+                          key={point.key}
+                          center={point.coords}
+                          radius={8 + Math.min(point.restaurants.length * 2, 10)}
+                          pathOptions={{ color: '#b91c1c', fillColor: '#ef4444', fillOpacity: 0.75 }}
+                        >
+                          <Tooltip direction="top" offset={[0, -6]}>{`${point.city} (${point.restaurants.length})`}</Tooltip>
+                          <Popup>
+                            <div className="text-sm">
+                              <p className="font-semibold">{point.city}</p>
+                              <p className="text-xs text-gray-500 mb-1">{point.restaurants.length} restaurant(s)</p>
+                              <ul className="text-xs text-gray-700">
+                                {point.restaurants.slice(0, 6).map((r) => (
+                                  <li key={r.id}>- {r.name}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </Popup>
+                        </CircleMarker>
+                      ))}
+                    </MapContainer>
+                  </div>
+                  {mappedCityPoints.length === 0 && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      Add city values to restaurants to show them on the map.
+                    </p>
+                  )}
+                  {unmappedCities.length > 0 && (
+                    <p className="text-xs text-amber-600 mt-2">
+                      Missing map coordinates for: {unmappedCities.join(', ')}.
+                    </p>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-white border border-gray-100 rounded-lg p-4">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2"><FiBarChart2 /> Rating Distribution</h3>
+                    {[5, 4, 3, 2, 1].map((s) => {
+                      const count = analytics.rating_distribution?.[String(s)] || 0;
+                      const total = analytics.totals?.reviews || 1;
+                      const pct = Math.round((count / total) * 100);
+                      return (
+                        <div key={s} className="flex items-center gap-2 mb-2">
+                          <span className="text-xs w-8">{s}★</span>
+                          <div className="flex-1 bg-gray-100 rounded-full h-3">
+                            <div className="bg-yellow-400 h-3 rounded-full" style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className="text-xs text-gray-500 w-10 text-right">{count}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="bg-white border border-gray-100 rounded-lg p-4">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Public Sentiment</h3>
+                    <div className="space-y-2 text-sm">
+                      <p>Positive: <span className="font-semibold text-green-600">{analytics.sentiment?.positive || 0}</span></p>
+                      <p>Neutral: <span className="font-semibold text-gray-600">{analytics.sentiment?.neutral || 0}</span></p>
+                      <p>Negative: <span className="font-semibold text-red-600">{analytics.sentiment?.negative || 0}</span></p>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'overview' && restaurants.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left: My Restaurants */}
           <div className="lg:col-span-1 space-y-4">
@@ -505,7 +745,7 @@ export default function OwnerDashboard() {
             )}
           </div>
         </div>
-      ) : (
+      ) : activeTab === 'overview' ? (
         <div className="text-center py-16 bg-white rounded-2xl shadow-sm">
           <FiGrid size={48} className="mx-auto text-gray-300 mb-4" />
           <h3 className="text-xl font-semibold text-gray-700 mb-2">No restaurants yet</h3>
@@ -514,7 +754,7 @@ export default function OwnerDashboard() {
             Add Restaurant
           </Link>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

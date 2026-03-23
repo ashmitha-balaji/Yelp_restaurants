@@ -1,18 +1,74 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { aiAPI } from '../services/api';
 import { FiMessageCircle, FiX, FiSend, FiTrash2, FiStar } from 'react-icons/fi';
 
+const DEFAULT_WELCOME_MESSAGE = {
+  role: 'assistant',
+  content: "Hi! I'm your restaurant assistant. Ask me for personalized recommendations based on your preferences!",
+};
+
+const getChatStorageKey = (userId) => `chatbot_messages_${userId}`;
+
+const normalizeAssistantPayload = (data) => {
+  const fallback = {
+    message: typeof data?.message === 'string' && data.message.trim()
+      ? data.message
+      : 'Here are some restaurant recommendations for you.',
+    recommendations: Array.isArray(data?.recommendations) ? data.recommendations : [],
+  };
+
+  if (typeof data?.message !== 'string') return fallback;
+  const raw = data.message.trim();
+  if (!raw.includes('"recommendations"') && !raw.startsWith('{')) return fallback;
+
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      message: typeof parsed?.message === 'string' && parsed.message.trim() ? parsed.message : fallback.message,
+      recommendations: Array.isArray(parsed?.recommendations) ? parsed.recommendations : fallback.recommendations,
+    };
+  } catch {
+    return fallback;
+  }
+};
+
 export default function ChatBot() {
   const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState([
-    { role: 'assistant', content: "Hi! I'm your restaurant assistant. Ask me for personalized recommendations based on your preferences!" },
-  ]);
+  const [messages, setMessages] = useState([DEFAULT_WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
+
+  // Keep chat isolated per user and reset on user switch/logout.
+  useEffect(() => {
+    if (!user?.id) {
+      setIsOpen(false);
+      setMessages([DEFAULT_WELCOME_MESSAGE]);
+      return;
+    }
+
+    const stored = localStorage.getItem(getChatStorageKey(user.id));
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed);
+          return;
+        }
+      } catch {}
+    }
+
+    setMessages([DEFAULT_WELCOME_MESSAGE]);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    localStorage.setItem(getChatStorageKey(user.id), JSON.stringify(messages));
+  }, [user?.id, messages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -40,10 +96,11 @@ export default function ChatBot() {
       }));
 
       const res = await aiAPI.chat(text, history);
+      const normalized = normalizeAssistantPayload(res?.data || {});
       setMessages([...newMessages, {
         role: 'assistant',
-        content: res.data.message,
-        recommendations: res.data.recommendations || [],
+        content: normalized.message,
+        recommendations: normalized.recommendations,
       }]);
     } catch (err) {
       const detail = err.response?.data?.message || err.response?.data?.detail || '';
@@ -58,20 +115,34 @@ export default function ChatBot() {
     setLoading(false);
   };
 
+  const getRecommendationRoute = (rec) => {
+    const id = rec?.id;
+    const yelpId = rec?.yelp_id;
+    const looksNumeric = typeof id === 'number' || /^\d+$/.test(String(id || ''));
+    if (rec?.source === 'yelp' || yelpId || !looksNumeric) {
+      return `/restaurant/yelp/${yelpId || id}`;
+    }
+    return `/restaurant/${id}`;
+  };
+
   const clearChat = () => {
-    setMessages([
+    const cleared = [
       { role: 'assistant', content: "Chat cleared! How can I help you find your next meal?" },
-    ]);
+    ];
+    setMessages(cleared);
+    if (user?.id) {
+      localStorage.setItem(getChatStorageKey(user.id), JSON.stringify(cleared));
+    }
   };
 
   if (!user) return null;
 
-  return (
+  const chatbotUI = (
     <>
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 bg-yelp-red text-white p-4 rounded-full shadow-xl hover:bg-yelp-dark transition-all z-50 group"
+          className="fixed bottom-6 right-6 bg-yelp-red text-white p-4 rounded-full shadow-xl hover:bg-yelp-dark transition-all z-[2000] group"
           aria-label="Open AI Assistant"
         >
           <FiMessageCircle size={24} />
@@ -82,7 +153,7 @@ export default function ChatBot() {
       )}
 
       {isOpen && (
-        <div className="fixed bottom-6 right-6 w-96 max-w-[calc(100vw-2rem)] h-[32rem] bg-white rounded-2xl shadow-2xl flex flex-col z-50 border border-gray-200">
+        <div className="fixed bottom-6 right-6 w-96 max-w-[calc(100vw-2rem)] h-[32rem] bg-white rounded-2xl shadow-2xl flex flex-col z-[2000] border border-gray-200">
           <div className="bg-yelp-red text-white px-4 py-3 rounded-t-2xl flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <FiMessageCircle size={20} />
@@ -112,7 +183,7 @@ export default function ChatBot() {
                       {msg.recommendations.map((rec, j) => (
                         <Link
                           key={j}
-                          to={`/restaurant/${rec.id}`}
+                          to={getRecommendationRoute(rec)}
                           onClick={() => setIsOpen(false)}
                           className="block bg-white rounded-lg p-2 border border-gray-200 hover:border-yelp-red transition text-left"
                         >
@@ -184,4 +255,7 @@ export default function ChatBot() {
       )}
     </>
   );
+
+  if (typeof document === 'undefined') return chatbotUI;
+  return createPortal(chatbotUI, document.body);
 }

@@ -1,8 +1,10 @@
 import json
 import os
 import re
+import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+import httpx
 
 _env_path = Path(__file__).resolve().parent.parent / ".env"
 if _env_path.exists():
@@ -10,6 +12,16 @@ if _env_path.exists():
     load_dotenv(dotenv_path=_env_path, override=True)
 GROQ_API_KEY = (os.getenv("GROQ_API_KEY") or "").strip()
 TAVILY_API_KEY = (os.getenv("TAVILY_API_KEY") or "").strip()
+YELP_API_KEY = (os.getenv("YELP_API_KEY") or "").strip()
+logger = logging.getLogger(__name__)
+
+# Some local environments inject HTTP(S)_PROXY to localhost tooling, which can
+# block outbound LLM traffic (e.g., 403 from proxy). Remove them for AI calls.
+for _proxy_key in [
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "all_proxy",
+]:
+    os.environ.pop(_proxy_key, None)
 
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
@@ -152,6 +164,12 @@ PRICE_KEYWORDS = {
     "fine dining": "$$$$", "luxury": "$$$$", "splurge": "$$$$",
 }
 
+CITY_CORRECTIONS = {
+    "freemont": "Fremont",
+    "newyork": "New York",
+    "sanjose": "San Jose",
+}
+
 
 def extract_intent(message: str) -> Dict[str, Optional[str]]:
     """Parse the user's message to extract cuisine, ambiance, dietary, price, and city."""
@@ -200,6 +218,64 @@ def extract_intent(message: str) -> Dict[str, Optional[str]]:
         result["keyword"] = " ".join(remaining[:3])
 
     return result
+
+
+def normalize_city(city: Optional[str]) -> Optional[str]:
+    if not city:
+        return city
+    c = city.strip()
+    if not c:
+        return c
+    return CITY_CORRECTIONS.get(c.lower(), c)
+
+
+def search_yelp_for_ai(
+    cuisine: Optional[str] = None,
+    city: Optional[str] = None,
+    keyword: Optional[str] = None,
+    limit: int = 10,
+) -> List[Dict]:
+    if not YELP_API_KEY:
+        return []
+
+    term_parts = [p for p in [cuisine, keyword] if p]
+    term = " ".join(term_parts).strip() or "restaurants"
+    location = normalize_city(city) or "San Jose, CA"
+
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            resp = client.get(
+                "https://api.yelp.com/v3/businesses/search",
+                params={"term": term, "location": location, "limit": min(limit, 20)},
+                headers={"Authorization": f"Bearer {YELP_API_KEY}"},
+            )
+        if resp.status_code != 200:
+            return []
+        businesses = resp.json().get("businesses") or []
+    except Exception:
+        return []
+
+    out = []
+    for b in businesses:
+        cats = b.get("categories") or []
+        cuisine_type = cats[0].get("title", "Restaurant") if cats else "Restaurant"
+        loc = b.get("location") or {}
+        out.append({
+            "id": b.get("id"),
+            "yelp_id": b.get("id"),
+            "source": "yelp",
+            "name": b.get("name"),
+            "cuisine_type": cuisine_type,
+            "price_range": b.get("price") or "$$",
+            "average_rating": b.get("rating") or 0,
+            "review_count": b.get("review_count") or 0,
+            "city": loc.get("city"),
+            "address": loc.get("address1"),
+            "ambiance": None,
+            "dietary_options": None,
+            "description": "Live Yelp restaurant",
+        })
+    return out
 
 
 def score_restaurant(r: Dict, intent: Dict, prefs: Optional[Dict]) -> float:
@@ -314,6 +390,79 @@ def build_conversational_message(intent: Dict, recommendations: List[Dict], pref
     return intro
 
 
+def _extract_json_block(content: str) -> Optional[Dict[str, Any]]:
+    text = (content or "").strip()
+    if not text:
+        return None
+
+    # If the model wrapped JSON in markdown fences, unwrap first.
+    if "```json" in text:
+        try:
+            text = text.split("```json", 1)[1].split("```", 1)[0].strip()
+        except Exception:
+            pass
+    elif "```" in text:
+        try:
+            text = text.split("```", 1)[1].split("```", 1)[0].strip()
+        except Exception:
+            pass
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    # Fallback: parse the largest JSON object-like block in the output.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start:end + 1]
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return None
+    return None
+
+
+def _normalize_llm_response(content: str) -> Dict[str, Any]:
+    parsed = _extract_json_block(content)
+    if parsed is None:
+        return {
+            "message": (content or "Here are some restaurant options for you.").strip(),
+            "recommendations": [],
+        }
+
+    message = parsed.get("message")
+    if not isinstance(message, str) or not message.strip():
+        message = "Here are some restaurant options for you."
+
+    raw_recs = parsed.get("recommendations")
+    recs: List[Dict[str, Any]] = []
+    if isinstance(raw_recs, list):
+        for item in raw_recs:
+            if not isinstance(item, dict):
+                continue
+            rec_id = item.get("id")
+            yelp_id = item.get("yelp_id")
+            source = item.get("source") or ("yelp" if yelp_id else "local")
+            recs.append({
+                "id": rec_id,
+                "name": str(item.get("name") or "").strip(),
+                "rating": item.get("rating") or item.get("average_rating") or 0,
+                "price_range": item.get("price_range") or "",
+                "cuisine_type": item.get("cuisine_type") or "",
+                "reason": item.get("reason") or "",
+                "source": source,
+                "yelp_id": yelp_id or (rec_id if source == "yelp" and isinstance(rec_id, str) else ""),
+            })
+
+    return {"message": message.strip(), "recommendations": recs}
+
+
 
 def chat_with_llm(
     db: Session, user_id: int, message: str,
@@ -344,7 +493,8 @@ def chat_with_llm(
             f"- {r['name']} (ID:{r['id']}) | Cuisine: {r.get('cuisine_type','N/A')} | "
             f"Rating: {r.get('average_rating',0)}\u2605 | Price: {r.get('price_range','N/A')} | "
             f"City: {r.get('city','N/A')} | Ambiance: {r.get('ambiance','N/A')} | "
-            f"Dietary: {r.get('dietary_options','N/A')}"
+            f"Dietary: {r.get('dietary_options','N/A')} | Source: {r.get('source','local')} | "
+            f"YelpID: {r.get('yelp_id','')}"
         )
     restaurant_text = "\n".join(restaurant_lines) if restaurant_lines else "No restaurants in the database yet."
 
@@ -363,7 +513,8 @@ INSTRUCTIONS:
 - Recommend restaurants from the database that match the user's query and preferences
 - For each recommendation, include: name, rating, price range, and a brief reason why it matches
 - Be conversational, friendly, and helpful
-- Format response as JSON with keys: "message" (your response text), "recommendations" (list with id, name, rating, price_range, cuisine_type, reason)
+- Format response as JSON with keys: "message" (your response text), "recommendations" (list with id, name, rating, price_range, cuisine_type, reason, source, yelp_id)
+- If a recommendation is from Yelp data, set source="yelp" and include yelp_id.
 """
 
     messages = [SystemMessage(content=system_prompt)]
@@ -377,15 +528,11 @@ INSTRUCTIONS:
     try:
         response = llm.invoke(messages)
         content = response.content
-        try:
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
-            return json.loads(content)
-        except (json.JSONDecodeError, IndexError):
-            return {"message": content, "recommendations": []}
+        if isinstance(content, list):
+            content = "\n".join(str(c) for c in content)
+        return _normalize_llm_response(str(content))
     except Exception as e:
+        logger.exception("AI provider request failed: %s", e)
         err_str = str(e).lower()
         if "quota" in err_str or "rate" in err_str or "429" in err_str:
             return {"message": "API quota exceeded. Check your Groq account at console.groq.com.", "recommendations": []}
@@ -405,7 +552,33 @@ def chat_with_assistant(
         }
 
     preferences = get_user_preferences(db, user_id)
-    all_restaurants = search_restaurants_for_ai(db, limit=50)
+    intent_for_search = extract_intent(message)
+    city_for_search = normalize_city(intent_for_search.get("city"))
+    local_restaurants = search_restaurants_for_ai(
+        db,
+        cuisine=intent_for_search.get("cuisine"),
+        price_range=intent_for_search.get("price_range"),
+        city=city_for_search,
+        dietary=intent_for_search.get("dietary"),
+        ambiance=intent_for_search.get("ambiance"),
+        keyword=intent_for_search.get("keyword"),
+        limit=50,
+    )
+    yelp_restaurants = search_yelp_for_ai(
+        cuisine=intent_for_search.get("cuisine"),
+        city=city_for_search,
+        keyword=intent_for_search.get("keyword"),
+        limit=20,
+    )
+
+    seen = set()
+    all_restaurants = []
+    for r in [*local_restaurants, *yelp_restaurants]:
+        key = f"{(r.get('name') or '').strip().lower()}|{(r.get('city') or '').strip().lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        all_restaurants.append(r)
 
     result = chat_with_llm(db, user_id, message, conversation_history, preferences, all_restaurants)
 

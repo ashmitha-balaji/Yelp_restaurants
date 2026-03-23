@@ -96,6 +96,7 @@ export const restaurantAPI = {
     searchCache.set(key, { data: res.data.restaurants || res.data, timestamp: Date.now() });
     return res;
   },
+  getYelpById: (yelpId) => api.get(`/restaurants/yelp/${yelpId}`),
   search: async (params) => {
     const key = getCacheKey(params);
     const cached = getCached(key);
@@ -115,6 +116,7 @@ export const restaurantAPI = {
     return api.post(`/restaurants/${id}/photos`, formData);
   },
   getOwnerRestaurants: () => api.get('/restaurants/owner/my-restaurants'),
+  trackView: (id) => api.post(`/owner-dashboard/restaurants/${id}/track-view`),
 };
 
 export const reviewAPI = {
@@ -140,6 +142,11 @@ export const aiAPI = {
 
 export const historyAPI = {
   get: () => api.get('/history'),
+};
+
+export const ownerDashboardAPI = {
+  getReviews: (params) => api.get('/owner-dashboard/reviews', { params }),
+  getAnalytics: (params) => api.get('/owner-dashboard/analytics', { params }),
 };
 
 export default api;

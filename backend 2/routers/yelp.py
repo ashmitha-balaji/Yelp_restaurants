@@ -1,4 +1,3 @@
-# backend 2/routers/yelp.py
 import os
 from pathlib import Path
 
@@ -65,3 +64,53 @@ async def search_yelp(
     data = resp.json()
     businesses = data.get("businesses") or []
     return {"restaurants": [_transform_business(b) for b in businesses]}
+
+
+@router.get("/restaurants/yelp/{yelp_id}")
+async def get_yelp_business(yelp_id: str):
+    """Fetch Yelp business details by Yelp business id."""
+    if not YELP_API_KEY:
+        raise HTTPException(503, "YELP_API_KEY not configured in backend 2 .env")
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{YELP_BASE}/businesses/{yelp_id}",
+            headers={"Authorization": f"Bearer {YELP_API_KEY}"},
+        )
+
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="Yelp business not found")
+    if resp.status_code == 401:
+        raise HTTPException(status_code=503, detail="Invalid Yelp API key")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Yelp API error: {resp.status_code}")
+
+    b = resp.json()
+    cats = b.get("categories") or []
+    cuisine = cats[0].get("title", "Restaurant") if cats else "Restaurant"
+    loc = b.get("location") or {}
+    photos = b.get("photos") or []
+    # Some businesses only include image_url
+    if not photos and b.get("image_url"):
+        photos = [b.get("image_url")]
+
+    return {
+        "id": b.get("id"),
+        "yelp_id": b.get("id"),
+        "name": b.get("name"),
+        "cuisine_type": cuisine,
+        "address": loc.get("address1"),
+        "city": loc.get("city"),
+        "state": loc.get("state"),
+        "zip_code": loc.get("zip_code"),
+        "country": loc.get("country"),
+        "phone": b.get("display_phone") or b.get("phone"),
+        "price_range": b.get("price") or "$$",
+        "average_rating": b.get("rating"),
+        "review_count": b.get("review_count", 0),
+        "photos": photos,
+        "yelp_url": b.get("url"),
+        "is_closed": b.get("is_closed"),
+        "transactions": b.get("transactions") or [],
+        "location_display": loc.get("display_address") or [],
+    }

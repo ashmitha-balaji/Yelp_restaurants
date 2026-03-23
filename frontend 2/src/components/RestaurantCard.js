@@ -7,14 +7,15 @@ import { getRestaurantImageUrl } from '../utils/placeholderImages';
 
 function RestaurantCard({ restaurant }) {
   const [imgError, setImgError] = useState(false);
+  const isYelp = !!restaurant?.yelp_id || !!restaurant?.yelp_url;
   const photoUrl = restaurant.photos?.[0]?.photo_url
     ? `${API_BASE}${restaurant.photos[0].photo_url}`
-    : getRestaurantImageUrl(restaurant);
+    : (restaurant.image_url || getRestaurantImageUrl(restaurant));
   const showImage = photoUrl && !imgError;
 
   return (
     <Link
-      to={`/restaurant/${restaurant.id}`}
+      to={isYelp ? `/restaurant/yelp/${restaurant.yelp_id || restaurant.id}` : `/restaurant/${restaurant.id}`}
       className="flex bg-white rounded-lg border border-gray-200 hover:shadow-lg hover:border-gray-300 transition-all overflow-hidden group"
     >
       {/* Photo - lazy load, fallback on error */}

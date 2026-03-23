@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { API_BASE } from '../services/api';
 import YelpLogo from './YelpLogo';
 import { FiMenu, FiX, FiUser, FiHeart, FiStar, FiLogOut, FiSettings, FiGrid, FiSearch, FiChevronDown } from 'react-icons/fi';
 
@@ -14,8 +15,9 @@ export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [searchInput, setSearchInput] = useState('');
-  const [locationInput, setLocationInput] = useState('Livermore, CA');
-  const showSearchBar = true; // Show search on all pages like Yelp
+  const [locationInput, setLocationInput] = useState('');
+  // Hide top navbar search on home page (Home already has its own search UI)
+  const showSearchBar = location.pathname !== '/';
   const userMenuRef = useRef(null);
 
   // Close user dropdown when clicking outside
@@ -36,8 +38,8 @@ export default function Navbar() {
     if (location.pathname === '/') {
       const urlSearch = searchParams.get('search');
       const urlLocation = searchParams.get('location');
-      if (urlSearch) setSearchInput(urlSearch);
-      if (urlLocation) setLocationInput(urlLocation);
+      setSearchInput(urlSearch || '');
+      setLocationInput(urlLocation || '');
     }
   }, [location.pathname, searchParams]);
 
@@ -63,12 +65,21 @@ export default function Navbar() {
     navigate(`/?${params.toString()}`);
   };
 
+  const handleLogoClick = () => {
+    setSearchInput('');
+    setLocationInput('');
+    navigate(`/?reset=${Date.now()}`);
+  };
+
+  const hasProfilePhoto = !!user?.profile_picture;
+  const profilePhotoUrl = hasProfilePhoto ? `${API_BASE}${user.profile_picture}` : '';
+
   return (
     <>
       <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <YelpLogo />
+            <YelpLogo onClick={handleLogoClick} />
 
             {/* Search bar - Yelp style */}
             {showSearchBar && (
@@ -102,7 +113,7 @@ export default function Navbar() {
                   For Restaurant Owners
                 </Link>
               )}
-              <Link to="/" className="text-gray-700 hover:text-yelp-red px-3 py-2 text-sm transition">
+              <Link to="/write-review" className="text-gray-700 hover:text-yelp-red px-3 py-2 text-sm transition">
                 Write a Review
               </Link>
               <Link to="/add-restaurant" className="text-gray-700 hover:text-yelp-red px-3 py-2 text-sm transition">
@@ -114,8 +125,12 @@ export default function Navbar() {
                     onClick={() => setUserMenuOpen(!userMenuOpen)}
                     className="flex items-center gap-2 px-3 py-2 rounded-full border border-gray-300 hover:border-yelp-red transition"
                   >
-                    <div className="w-7 h-7 rounded-full bg-yelp-red flex items-center justify-center text-white text-xs font-bold">
-                      {user.name?.charAt(0).toUpperCase()}
+                    <div className="w-7 h-7 rounded-full bg-yelp-red overflow-hidden flex items-center justify-center text-white text-xs font-bold">
+                      {hasProfilePhoto ? (
+                        <img src={profilePhotoUrl} alt={user.name || 'Profile'} className="w-full h-full object-cover" />
+                      ) : (
+                        user.name?.charAt(0).toUpperCase()
+                      )}
                     </div>
                     <span className="text-sm font-medium text-gray-700 max-w-24 truncate">{user.name?.split(' ')[0]}</span>
                   </button>
@@ -191,7 +206,7 @@ export default function Navbar() {
             {user ? (
               <div className="space-y-1">
                 <Link to="/profile" onClick={() => setMenuOpen(false)} className="block py-2 text-gray-700">Profile</Link>
-                <Link to="/add-restaurant" onClick={() => setMenuOpen(false)} className="block py-2 text-gray-700">Write a Review</Link>
+                <Link to="/write-review" onClick={() => setMenuOpen(false)} className="block py-2 text-gray-700">Write a Review</Link>
                 <Link to="/favorites" onClick={() => setMenuOpen(false)} className="block py-2 text-gray-700">Favorites</Link>
                 <Link to="/history" onClick={() => setMenuOpen(false)} className="block py-2 text-gray-700">History</Link>
                 <Link to="/my-reviews" onClick={() => setMenuOpen(false)} className="block py-2 text-gray-700">My Reviews</Link>
