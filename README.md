@@ -76,10 +76,12 @@ Clickable restaurant cards linking to details
 
 Loading indicator while AI processes.
 
+4. Application Screenshots:
+   
 
-5. API Documentation:
+6. API Documentation:
 
-6. Conclusion
+7. Conclusion
 The Lab1 implementation delivers a full Yelp-style platform for restaurants with users and owners personas, JWT authentication, restaurant search, reviews, favourites, history and AI assistant powered by Langchain, Groq and Tavily. The application is responsive, uses swagger for API documentation and integrates the Yelp API for enhanced discovery.
 
 **How to Run**
@@ -88,7 +90,7 @@ The Lab1 implementation delivers a full Yelp-style platform for restaurants with
 
 **Backend (backend 2):**
 ```bash
-cd "backend 2"
+cd backend
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -98,7 +100,7 @@ uvicorn main:app --reload --port 8000
 
 **Frontend (frontend 2):**
 ```bash
-cd "frontend 2"
+cd frontend
 npm install
 npm start
 ```
