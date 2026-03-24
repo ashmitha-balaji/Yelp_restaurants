@@ -1,7 +1,10 @@
 LAB - 1 
-Yelp Restaurants
-LAB1 
+
 Yelp Prototype - Restaurants & Reviews Platform
+
+Members:
+* Ashmitha Paruchuri Balaji
+* Naman Vipul Chheda
 
 1. Introduction
 Purpose:
