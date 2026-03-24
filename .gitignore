@@ -1,13 +1,13 @@
 # Backend
-backend 2/.env
-backend 2/venv/
-backend 2/**/__pycache__/
-backend 2/uploads/
+backend/.env
+backend/venv/
+backend/__pycache__/
+backend/uploads/
 
 # Frontend
-frontend 2/node_modules/
+frontend/node_modules/
 
-# Datasets (large files)
+# Datasets (large files - do not push to git)
 datasets/
 
 # OS

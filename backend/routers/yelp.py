@@ -47,7 +47,12 @@ async def search_yelp(
         raise HTTPException(503, "YELP_API_KEY not configured in backend 2 .env")
 
     search_term = (term or "restaurants").strip()
-    location = (city or "San Jose, CA").strip()
+    raw = (city or "San Jose, CA").strip()
+    # Yelp needs valid location: min 3 chars for city names, 5 for zip codes
+    if len(raw) < 3 or (raw.isdigit() and len(raw) < 5):
+        location = "San Jose, CA"
+    else:
+        location = raw
 
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(
@@ -59,7 +64,14 @@ async def search_yelp(
     if resp.status_code == 401:
         raise HTTPException(503, "Invalid Yelp API key")
     if resp.status_code != 200:
-        raise HTTPException(502, f"Yelp API error: {resp.status_code}")
+        detail = str(resp.status_code)
+        try:
+            err_body = resp.json()
+            if isinstance(err_body.get("error"), dict):
+                detail = err_body["error"].get("description", detail)
+        except Exception:
+            pass
+        raise HTTPException(502, f"Yelp API error: {detail}")
 
     data = resp.json()
     businesses = data.get("businesses") or []
