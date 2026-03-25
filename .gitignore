@@ -1,0 +1,14 @@
+# Backend
+backend/.env
+backend/venv/
+backend/__pycache__/
+backend/uploads/
+
+# Frontend
+frontend/node_modules/
+
+# Datasets (large files - do not push to git)
+datasets/
+
+# OS
+.DS_Store
