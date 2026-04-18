@@ -12,3 +12,15 @@ datasets/
 
 # OS
 .DS_Store
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Lab 2
+lab2/venv/
+lab2/.venv/
+lab2/screenshots/
+lab2/docs/screenshots/
+*.log

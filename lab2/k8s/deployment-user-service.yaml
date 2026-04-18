@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: yelp-lab2
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: yelp-user-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: yelp-lab2-env
+          env:
+            - name: APP_MODULE
+              value: "lab2.services.user_service.app:app"
+            - name: APP_PORT
+              value: "8001"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: yelp-lab2
+spec:
+  selector:
+    app: user-service
+  ports:
+    - port: 8001
+      targetPort: 8001

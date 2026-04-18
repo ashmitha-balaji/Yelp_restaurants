@@ -1,0 +1,18 @@
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc default-libmysqlclient-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+ENV APP_ROOT=/app
+ENV PYTHONPATH=/app:/app/backend:/app/lab2:/app/lab2/python
+ENV PYTHONUNBUFFERED=1
+COPY backend/requirements.txt /app/backend/requirements.txt
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt \
+    && pip install --no-cache-dir kafka-python pymongo
+COPY backend /app/backend
+COPY lab2 /app/lab2
+ARG APP_MODULE=lab2.services.user_service.app:app
+ARG APP_PORT=8001
+ENV APP_MODULE=$APP_MODULE
+ENV APP_PORT=$APP_PORT
+CMD ["sh", "-c", "python -m uvicorn ${APP_MODULE} --host 0.0.0.0 --port ${APP_PORT}"]
