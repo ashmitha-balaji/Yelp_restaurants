@@ -13,6 +13,7 @@ for p in (_LAB2, _LAB2_PY, _BACKEND):
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from mongo_routers import ai_assistant as mongo_ai_assistant
 from mongo_routers import restaurants
 from routers import yelp
 
@@ -24,15 +25,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(restaurants.router)
+# IMPORTANT: register Yelp routes before /restaurants/{restaurant_id}
+# so /restaurants/yelp does not get parsed as {restaurant_id}="yelp".
 app.include_router(yelp.router)
-
-# AI assistant — optional; requires GROQ_API_KEY and MySQL (Lab 1 feature)
-try:
-    from routers import ai_assistant
-    app.include_router(ai_assistant.router)
-except Exception:
-    pass
+app.include_router(restaurants.router)
+app.include_router(mongo_ai_assistant.router)
 
 
 @app.get("/health")

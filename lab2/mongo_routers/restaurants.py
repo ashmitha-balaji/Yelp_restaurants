@@ -13,14 +13,29 @@ from mongo_auth import get_current_user, get_optional_user
 from mongo_client import get_db, get_next_id
 
 router = APIRouter(prefix="/restaurants", tags=["Restaurants"])
+try:
+    from kafka_client import publish_restaurant_event
+except ImportError:
+    publish_restaurant_event = None  # type: ignore
 
 
 def _photo_resp(p: dict) -> dict:
     return {"id": p["id"], "photo_url": p["photo_url"], "caption": p.get("caption")}
 
 
+def _to_iso(value) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, str):
+        # Kafka projections may already store ISO strings.
+        return value
+    return str(value)
+
+
 def _rest_resp(doc: dict) -> dict:
-    created = doc.get("created_at")
+    created = _to_iso(doc.get("created_at"))
     return {
         "id": doc["_id"],
         "owner_id": doc.get("owner_id"),
@@ -44,7 +59,7 @@ def _rest_resp(doc: dict) -> dict:
         "review_count": doc.get("review_count", 0),
         "is_claimed": doc.get("is_claimed", False),
         "photos": [_photo_resp(p) for p in doc.get("photos", [])],
-        "created_at": created.isoformat() if created else None,
+        "created_at": created,
     }
 
 
@@ -52,6 +67,26 @@ def _parse_city(location: str) -> str:
     if not location or not location.strip():
         return location or ""
     return location.split(",")[0].strip()
+
+
+def _json_safe(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    return value
+
+
+def _emit_restaurant_event(topic: str, payload: dict) -> None:
+    if publish_restaurant_event is None:
+        return
+    try:
+        publish_restaurant_event(topic, _json_safe(payload))
+    except Exception:
+        # Do not break main API flow if Kafka is temporarily unavailable.
+        pass
 
 
 def _get_upload_dir() -> str:
@@ -147,6 +182,15 @@ def create_restaurant(data: dict, current_user: dict = Depends(get_current_user)
         }
     )
     db.restaurants.insert_one(doc)
+    _emit_restaurant_event(
+        "restaurant.created",
+        {
+            "action": "create",
+            "restaurant_id": rest_id,
+            "owner_id": current_user["id"],
+            "restaurant": doc,
+        },
+    )
     return _rest_resp(doc)
 
 
@@ -172,7 +216,18 @@ def update_restaurant(
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc)
         db.restaurants.update_one({"_id": restaurant_id}, {"$set": updates})
-    return _rest_resp(db.restaurants.find_one({"_id": restaurant_id}))
+    updated_doc = db.restaurants.find_one({"_id": restaurant_id})
+    _emit_restaurant_event(
+        "restaurant.updated",
+        {
+            "action": "update",
+            "restaurant_id": restaurant_id,
+            "owner_id": current_user["id"],
+            "updates": updates,
+            "restaurant": updated_doc,
+        },
+    )
+    return _rest_resp(updated_doc)
 
 
 @router.post("/{restaurant_id}/claim")
@@ -189,7 +244,17 @@ def claim_restaurant(restaurant_id: int, current_user: dict = Depends(get_curren
         {"_id": restaurant_id},
         {"$set": {"owner_id": current_user["id"], "is_claimed": True}},
     )
-    return _rest_resp(db.restaurants.find_one({"_id": restaurant_id}))
+    claimed_doc = db.restaurants.find_one({"_id": restaurant_id})
+    _emit_restaurant_event(
+        "restaurant.claimed",
+        {
+            "action": "claim",
+            "restaurant_id": restaurant_id,
+            "owner_id": current_user["id"],
+            "restaurant": claimed_doc,
+        },
+    )
+    return _rest_resp(claimed_doc)
 
 
 @router.post("/{restaurant_id}/photos")

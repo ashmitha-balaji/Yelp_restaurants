@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { reviewAPI, restaurantAPI, API_BASE } from '../services/api';
 import { StarInput } from '../components/StarRating';
@@ -23,12 +23,12 @@ export default function WriteReview() {
   const [searchError, setSearchError] = useState('');
   const [restaurantReviews, setRestaurantReviews] = useState([]);
 
-  const toDedupKey = (r) =>
+  const toDedupKey = useCallback((r) =>
     r?.yelp_id
       ? `yelp:${r.yelp_id}`
-      : `local:${(r?.name || '').trim().toLowerCase()}|${(r?.city || '').trim().toLowerCase()}|${(r?.address || '').trim().toLowerCase()}`;
+      : `local:${(r?.name || '').trim().toLowerCase()}|${(r?.city || '').trim().toLowerCase()}|${(r?.address || '').trim().toLowerCase()}`, []);
 
-  const mergeRestaurants = (localRestaurants = [], yelpRestaurants = []) => {
+  const mergeRestaurants = useCallback((localRestaurants = [], yelpRestaurants = []) => {
     const combined = [...localRestaurants, ...yelpRestaurants];
     const seen = new Set();
     return combined.filter((r) => {
@@ -37,7 +37,7 @@ export default function WriteReview() {
       seen.add(key);
       return true;
     });
-  };
+  }, [toDedupKey]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
@@ -84,7 +84,7 @@ export default function WriteReview() {
     };
 
     fetchInitialRestaurants();
-  }, [restaurantId]);
+  }, [restaurantId, mergeRestaurants]);
 
   const handleRestaurantSearch = async (e) => {
     e.preventDefault();

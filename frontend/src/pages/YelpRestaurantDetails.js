@@ -7,11 +7,11 @@ import {
   FiExternalLink,
   FiMapPin,
   FiPhone,
-  FiDollarSign,
   FiHeart,
   FiImage,
   FiNavigation,
   FiClock,
+  FiUser,
 } from 'react-icons/fi';
 
 export default function YelpRestaurantDetails() {
@@ -23,6 +23,9 @@ export default function YelpRestaurantDetails() {
   const [isFavorite, setIsFavorite] = useState(false);
   const [favoriteLoading, setFavoriteLoading] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [yelpReviews, setYelpReviews] = useState([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsNote, setReviewsNote] = useState('');
 
   useEffect(() => {
     const run = async () => {
@@ -37,6 +40,24 @@ export default function YelpRestaurantDetails() {
       }
     };
     run();
+  }, [yelpId]);
+
+  useEffect(() => {
+    if (!yelpId) return;
+    const fetchYelpReviews = async () => {
+      setReviewsLoading(true);
+      try {
+        const res = await restaurantAPI.getYelpReviews(yelpId);
+        setYelpReviews(Array.isArray(res?.data?.reviews) ? res.data.reviews : []);
+        setReviewsNote(typeof res?.data?.note === 'string' ? res.data.note : '');
+      } catch {
+        setYelpReviews([]);
+        setReviewsNote('Could not load Yelp reviews right now.');
+      } finally {
+        setReviewsLoading(false);
+      }
+    };
+    fetchYelpReviews();
   }, [yelpId]);
 
   useEffect(() => {
@@ -335,6 +356,64 @@ export default function YelpRestaurantDetails() {
               <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-sm">
                 Yelp results are live. Reviews/Favorites in this app only apply to restaurants stored in your own database.
               </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between gap-2 mb-4">
+                <h2 className="text-lg font-bold text-gray-900">Yelp Reviews</h2>
+                <span className="text-xs text-gray-500">Yelp Fusion provides up to 3 reviews</span>
+              </div>
+
+              {reviewsLoading ? (
+                <div className="text-sm text-gray-500">Loading Yelp reviews...</div>
+              ) : yelpReviews.length > 0 ? (
+                <div className="space-y-4">
+                  {yelpReviews.map((rev) => (
+                    <div key={rev.id || `${rev.user?.name}-${rev.time_created}`} className="border border-gray-200 rounded-xl p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center">
+                            {rev.user?.image_url ? (
+                              <img src={rev.user.image_url} alt={rev.user?.name || 'Reviewer'} className="w-full h-full object-cover" />
+                            ) : (
+                              <FiUser className="text-gray-500" size={14} />
+                            )}
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold text-gray-900">{rev.user?.name || 'Yelp user'}</div>
+                            <div className="text-xs text-gray-500">{rev.time_created || ''}</div>
+                          </div>
+                        </div>
+                        <StarDisplay rating={rev.rating || 0} size={14} showNumber />
+                      </div>
+
+                      <p className="mt-3 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                        {rev.text || 'No review text provided.'}
+                      </p>
+
+                      {rev.url && (
+                        <a
+                          href={rev.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 mt-3 text-sm text-yelp-red font-medium hover:underline"
+                        >
+                          Read on Yelp <FiExternalLink size={13} />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500 space-y-2">
+                  <p>No Yelp reviews available for this business right now.</p>
+                  {reviewsNote && (
+                    <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      {reviewsNote}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

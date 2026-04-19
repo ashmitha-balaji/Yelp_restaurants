@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { reviewAPI } from '../services/api';
-import { API_BASE } from '../services/api';
 import { StarDisplay } from './StarRating';
 import { FiThumbsUp } from 'react-icons/fi';
 

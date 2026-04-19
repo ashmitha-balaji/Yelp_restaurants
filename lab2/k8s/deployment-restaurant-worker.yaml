@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restaurant-worker
+  namespace: yelp-lab2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: restaurant-worker
+  template:
+    metadata:
+      labels:
+        app: restaurant-worker
+    spec:
+      containers:
+        - name: restaurant-worker
+          image: yelp-restaurant-worker:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "/app/lab2/services/restaurant_worker/worker.py"]
+          envFrom:
+            - configMapRef:
+                name: yelp-lab2-env

@@ -97,14 +97,9 @@ export const restaurantAPI = {
     return res;
   },
   getYelpById: (yelpId) => api.get(`/restaurants/yelp/${yelpId}`),
-  search: async (params) => {
-    const key = getCacheKey(params);
-    const cached = getCached(key);
-    if (cached) return { data: cached };
-    const res = await api.get('/restaurants/', { params });
-    searchCache.set(key, { data: res.data, timestamp: Date.now() });
-    return res;
-  },
+  getYelpReviews: (yelpId) => api.get(`/restaurants/yelp/${yelpId}/reviews`),
+  // Do not cache local DB search results because owners/seeding can update IDs and records often.
+  search: (params) => api.get('/restaurants/', { params }),
   getById: (id) => api.get(`/restaurants/${id}`),
   create: (data) => api.post('/restaurants/', data),
   update: (id, data) => api.put(`/restaurants/${id}`, data),

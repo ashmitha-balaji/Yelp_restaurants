@@ -4,10 +4,10 @@ This folder contains **Lab 2–specific** artifacts: microservice entrypoints, D
 
 ## Quick start (full stack with Docker)
 
-From the **`lab-1`** directory (parent of `lab2/`):
+From the repo root (parent of `lab2/`), use an explicit env file:
 
 ```bash
-docker compose -f lab2/docker-compose.yml up --build
+docker compose --env-file lab2/.env -f lab2/docker-compose.yml up --build -d
 ```
 
 - **API gateway:** http://localhost:8000  
@@ -16,7 +16,55 @@ docker compose -f lab2/docker-compose.yml up --build
 - **MongoDB:** localhost:27017 (`MONGODB_DB_NAME=yelp_lab2`)  
 - **Kafka:** localhost:9092  
 
-Set `GROQ_API_KEY`, `TAVILY_API_KEY`, `YELP_API_KEY` in the environment or a `.env` file in the project root if your compose setup loads it.
+Set `GROQ_API_KEY`, `TAVILY_API_KEY`, `YELP_API_KEY` in `lab2/.env` (recommended for this project).
+
+## Kubernetes quick start (Docker Desktop)
+
+1. Enable Kubernetes in Docker Desktop and confirm:
+
+   ```bash
+   kubectl config use-context docker-desktop
+   kubectl get nodes
+   ```
+
+2. Apply manifests:
+
+   ```bash
+   kubectl apply -f lab2/k8s/namespace.yaml
+   kubectl apply -f lab2/k8s/configmap-env.yaml
+   kubectl apply -f lab2/k8s/deployment-mongo.yaml
+   kubectl apply -f lab2/k8s/deployment-zookeeper.yaml
+   kubectl apply -f lab2/k8s/deployment-kafka.yaml
+   kubectl apply -f lab2/k8s/deployment-user-service.yaml
+   kubectl apply -f lab2/k8s/deployment-owner-service.yaml
+   kubectl apply -f lab2/k8s/deployment-restaurant-service.yaml
+   kubectl apply -f lab2/k8s/deployment-review-service.yaml
+   kubectl apply -f lab2/k8s/deployment-review-worker.yaml
+   kubectl apply -f lab2/k8s/deployment-restaurant-worker.yaml
+   kubectl apply -f lab2/k8s/deployment-gateway.yaml
+   kubectl apply -f lab2/k8s/deployment-frontend.yaml
+   ```
+
+3. If app pods show `ErrImagePull` locally, tag compose-built images to manifest image names:
+
+   ```bash
+   docker tag yelp-lab2-user-service:latest yelp-user-service:latest
+   docker tag yelp-lab2-owner-service:latest yelp-owner-service:latest
+   docker tag yelp-lab2-restaurant-service:latest yelp-restaurant-service:latest
+   docker tag yelp-lab2-review-service:latest yelp-review-service:latest
+   docker tag yelp-lab2-review-worker:latest yelp-review-worker:latest
+   docker tag yelp-lab2-restaurant-worker:latest yelp-restaurant-worker:latest
+   docker tag yelp-lab2-frontend:latest yelp-frontend:latest
+   kubectl rollout restart deployment user-service owner-service restaurant-service review-service review-worker restaurant-worker frontend -n yelp-lab2
+   ```
+
+4. Verify:
+
+   ```bash
+   kubectl get deployments -n yelp-lab2
+   kubectl get pods -n yelp-lab2
+   kubectl get svc -n yelp-lab2
+   ```
 
 ### First-time DB
 
@@ -49,6 +97,12 @@ Lab 2 **runtime** uses **MongoDB**. If you need to **copy existing Lab 1 data fr
 - Job status: **GET** `/reviews/job/{job_id}` (MongoDB).  
 - **Sessions:** login/signup record a document in MongoDB `sessions` when `MONGODB_URL` is set (see `lab2/python/mongo_sessions.py`).
 
+### Restaurant event flow (Kafka)
+
+- **POST** `/restaurants/` still returns **201** for frontend compatibility.
+- Restaurant API also publishes Kafka events: `restaurant.created`, `restaurant.updated`, `restaurant.claimed`.
+- **restaurant-worker** consumes these topics and stores processed event records in MongoDB `restaurant_events`.
+
 ### Monolith (Lab 1) without Docker
 
 Continue using `uvicorn main:app` on port 8000 and `npm start` on port 3000 — review endpoints remain **synchronous 201/204** on the monolith.
@@ -70,7 +124,17 @@ Continue using `uvicorn main:app` on port 8000 and `npm start` on port 3000 — 
 
 ## Redux (frontend)
 
-The React app uses **Redux Toolkit** (`frontend/src/store/`) for auth, restaurants, reviews, and favourites. Use **Redux DevTools** in the browser for screenshots required by the report.
+The React app uses **Redux Toolkit** (`frontend/src/store/`) with at least these slices:
+
+- `auth` — mirrors login/logout/session user state
+- `app` — tracks current route, query string, and visit counter
+
+### Redux evidence capture (Phase 4)
+
+1. Open app and browser **Redux DevTools**.
+2. Sign in/out once to capture `auth` slice state transitions.
+3. Navigate across pages (`/`, `/favorites`, `/my-reviews`) to capture `app.routeVisited` updates.
+4. Take at least 2 screenshots showing distinct slices in state + action timeline.
 
 ## AWS
 

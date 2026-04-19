@@ -1,18 +1,30 @@
 import React, { useState, useEffect } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { favoriteAPI } from '../services/api';
 import RestaurantCard from '../components/RestaurantCard';
 import { FiHeart } from 'react-icons/fi';
+import {
+  selectFavourites,
+  setFavourites,
+  setFavouritesError,
+  setFavouritesLoading,
+} from '../store/favouritesSlice';
 
 export default function Favorites() {
-  const [favorites, setFavorites] = useState([]);
+  const dispatch = useDispatch();
+  const favorites = useSelector(selectFavourites);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    dispatch(setFavouritesLoading(true));
     favoriteAPI.getAll()
-      .then((res) => setFavorites(res.data))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+      .then((res) => dispatch(setFavourites(res.data || [])))
+      .catch(() => dispatch(setFavouritesError('Failed to load favorites.')))
+      .finally(() => {
+        dispatch(setFavouritesLoading(false));
+        setLoading(false);
+      });
+  }, [dispatch]);
 
   if (loading) {
     return <div className="flex justify-center py-20"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-yelp-red" /></div>;

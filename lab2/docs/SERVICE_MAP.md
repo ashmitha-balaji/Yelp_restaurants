@@ -12,7 +12,9 @@ This document maps the monolithic [backend/main.py](../../backend/main.py) route
 | 4 | `review-service` | Review API (Kafka producers for mutations) + read APIs |
 | 5 | `frontend` | React SPA (nginx serving `build/`) |
 
-**Separate worker process (not counted as “API service” in the table above):** `review-worker` — Kafka consumer that persists reviews and recalculates ratings.
+**Separate worker processes (not counted as “API service” in the table above):**
+- `review-worker` — Kafka consumer that persists reviews and recalculates ratings.
+- `restaurant-worker` — Kafka consumer for `restaurant.created/updated/claimed`, stores processed event records and projections.
 
 ## Router → Service
 

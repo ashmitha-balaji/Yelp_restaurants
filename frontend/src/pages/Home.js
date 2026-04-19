@@ -1,11 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import { restaurantAPI } from '../services/api';
 import RestaurantCard from '../components/RestaurantCard';
 import RestaurantCardSkeleton from '../components/RestaurantCardSkeleton';
 import RecentActivity from '../components/RecentActivity';
-import { useAuth } from '../context/AuthContext';
 import { FiSearch, FiFilter, FiMapPin, FiClock, FiDollarSign, FiList } from 'react-icons/fi';
+import {
+  selectRestaurantList,
+  setRestaurantError,
+  setRestaurantList,
+  setRestaurantListLoading,
+} from '../store/restaurantSlice';
 
 const CUISINES = ['Italian', 'Chinese', 'Mexican', 'Indian', 'Japanese', 'American', 'Thai', 'French', 'Mediterranean', 'Korean'];
 const HERO_IMAGES = [
@@ -17,9 +23,9 @@ const HERO_IMAGES = [
 ];
 
 export default function Home() {
-  const { user } = useAuth();
+  const dispatch = useDispatch();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [restaurants, setRestaurants] = useState([]);
+  const restaurants = useSelector(selectRestaurantList);
   const [loading, setLoading] = useState(true);
   const [heroImageIndex, setHeroImageIndex] = useState(0);
   const [search, setSearch] = useState('');
@@ -38,6 +44,7 @@ export default function Home() {
 
   const fetchRestaurants = useCallback(async () => {
     setLoading(true);
+    dispatch(setRestaurantListLoading(true));
     // Build Yelp params
     const term = search || filters.cuisine_type || 'restaurants';
     const city =
@@ -91,9 +98,19 @@ export default function Home() {
       return true;
     });
 
-    setRestaurants(deduped.slice(0, 20));
+    dispatch(setRestaurantList({
+      restaurants: deduped.slice(0, 20),
+      query: {
+        search,
+        location,
+        filters,
+      },
+    }));
+    if (yelpResult.status !== 'fulfilled' && localResult.status !== 'fulfilled') {
+      dispatch(setRestaurantError('Could not fetch restaurants from Yelp or local database.'));
+    }
     setLoading(false);
-  }, [search, location, filters]);
+  }, [dispatch, search, location, filters]);
 
   useEffect(() => {
     // Always reset to defaults on a fresh page load/refresh.
@@ -102,7 +119,7 @@ export default function Home() {
     if (searchParams.get('search') || searchParams.get('location')) {
       setSearchParams({}, { replace: true });
     }
-  }, []);
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     // Reset homepage state when logo sends a reset query.

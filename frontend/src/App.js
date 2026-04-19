@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { useDispatch } from 'react-redux';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
@@ -17,6 +18,7 @@ import Favorites from './pages/Favorites';
 import MyReviews from './pages/MyReviews';
 import History from './pages/History';
 import OwnerDashboard from './pages/OwnerDashboard';
+import { routeVisited } from './store/appSlice';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -26,10 +28,12 @@ function PrivateRoute({ children }) {
 
 function ScrollToTopOnRouteChange() {
   const { pathname, search } = useLocation();
+  const dispatch = useDispatch();
 
   React.useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-  }, [pathname, search]);
+    dispatch(routeVisited({ pathname, search }));
+  }, [dispatch, pathname, search]);
 
   return null;
 }

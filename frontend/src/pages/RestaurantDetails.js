@@ -1,18 +1,39 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import { restaurantAPI, reviewAPI, favoriteAPI, API_BASE } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { StarDisplay } from '../components/StarRating';
 import { getRestaurantImageUrl } from '../utils/placeholderImages';
 import { FiHeart, FiMapPin, FiPhone, FiGlobe, FiClock, FiEdit2, FiTrash2, FiDollarSign, FiCheckCircle, FiFlag } from 'react-icons/fi';
+import {
+  selectRestaurantDetailsById,
+  setRestaurantDetail,
+  setRestaurantDetailLoading,
+  setRestaurantError,
+} from '../store/restaurantSlice';
+import {
+  selectReviewsForRestaurant,
+  removeReviewFromState,
+  setRestaurantReviews,
+  setReviewError,
+  setReviewLoading,
+} from '../store/reviewSlice';
+import {
+  selectFavouriteStatusByRestaurant,
+  setFavouriteStatus,
+} from '../store/favouritesSlice';
 
 export default function RestaurantDetails() {
   const { id } = useParams();
+  const restaurantId = Number(id);
   const navigate = useNavigate();
+  const dispatch = useDispatch();
   const { user } = useAuth();
-  const [restaurant, setRestaurant] = useState(null);
-  const [reviews, setReviews] = useState([]);
-  const [isFavorite, setIsFavorite] = useState(false);
+  const detailsById = useSelector(selectRestaurantDetailsById);
+  const restaurant = detailsById[restaurantId] || null;
+  const reviews = useSelector(selectReviewsForRestaurant(restaurantId));
+  const isFavorite = useSelector(selectFavouriteStatusByRestaurant(restaurantId));
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
   const [claimMsg, setClaimMsg] = useState('');
@@ -20,36 +41,41 @@ export default function RestaurantDetails() {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        dispatch(setRestaurantDetailLoading(true));
+        dispatch(setReviewLoading(true));
         restaurantAPI.trackView(id).catch(() => {});
         const [restRes, revRes] = await Promise.all([
           restaurantAPI.getById(id),
           reviewAPI.getForRestaurant(id),
         ]);
-        setRestaurant(restRes.data);
-        setReviews(revRes.data);
+        dispatch(setRestaurantDetail(restRes.data));
+        dispatch(setRestaurantReviews({ restaurantId, reviews: revRes.data || [] }));
 
         if (user) {
           try {
             const favRes = await favoriteAPI.check(id);
-            setIsFavorite(favRes.data.is_favorite);
+            dispatch(setFavouriteStatus({ restaurantId, isFavorite: favRes.data.is_favorite }));
           } catch {}
         }
       } catch (err) {
         console.error('Failed to fetch restaurant:', err);
+        dispatch(setRestaurantError('Failed to fetch restaurant details.'));
+        dispatch(setReviewError('Failed to fetch restaurant reviews.'));
       }
       setLoading(false);
     };
     fetchData();
-  }, [id, user]);
+  }, [dispatch, id, restaurantId, user]);
 
   const toggleFavorite = async () => {
     try {
       if (isFavorite) {
         await favoriteAPI.remove(id);
+        dispatch(setFavouriteStatus({ restaurantId, isFavorite: false }));
       } else {
         await favoriteAPI.add(parseInt(id));
+        dispatch(setFavouriteStatus({ restaurantId, isFavorite: true }));
       }
-      setIsFavorite(!isFavorite);
     } catch (err) {
       console.error('Failed to toggle favorite:', err);
     }
@@ -60,7 +86,7 @@ export default function RestaurantDetails() {
     setClaimMsg('');
     try {
       const res = await restaurantAPI.claim(id);
-      setRestaurant(res.data);
+      dispatch(setRestaurantDetail(res.data));
       setClaimMsg('Restaurant claimed successfully!');
     } catch (err) {
       setClaimMsg(err.response?.data?.detail || 'Failed to claim restaurant.');
@@ -72,9 +98,9 @@ export default function RestaurantDetails() {
     if (!window.confirm('Delete this review?')) return;
     try {
       await reviewAPI.delete(reviewId);
-      setReviews(reviews.filter((r) => r.id !== reviewId));
+      dispatch(removeReviewFromState(reviewId));
       const restRes = await restaurantAPI.getById(id);
-      setRestaurant(restRes.data);
+      dispatch(setRestaurantDetail(restRes.data));
     } catch (err) {
       console.error('Failed to delete review:', err);
     }

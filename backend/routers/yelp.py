@@ -126,3 +126,64 @@ async def get_yelp_business(yelp_id: str):
         "transactions": b.get("transactions") or [],
         "location_display": loc.get("display_address") or [],
     }
+
+
+@router.get("/restaurants/yelp/{yelp_id}/reviews")
+async def get_yelp_business_reviews(yelp_id: str):
+    """Fetch Yelp business reviews (Yelp Fusion returns up to 3 reviews)."""
+    if not YELP_API_KEY:
+        raise HTTPException(503, "YELP_API_KEY not configured in backend 2 .env")
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{YELP_BASE}/businesses/{yelp_id}/reviews",
+            headers={"Authorization": f"Bearer {YELP_API_KEY}"},
+        )
+
+    if resp.status_code == 404:
+        # Some Yelp keys/tiers return 404 for /reviews even when business details endpoint works.
+        return {
+            "yelp_id": yelp_id,
+            "total": 0,
+            "max_available": 3,
+            "reviews": [],
+            "note": "Yelp reviews endpoint is unavailable for this API key or business.",
+        }
+    if resp.status_code == 401:
+        raise HTTPException(status_code=503, detail="Invalid Yelp API key")
+    if resp.status_code != 200:
+        return {
+            "yelp_id": yelp_id,
+            "total": 0,
+            "max_available": 3,
+            "reviews": [],
+            "note": f"Yelp reviews endpoint returned {resp.status_code}.",
+        }
+
+    data = resp.json() or {}
+    raw_reviews = data.get("reviews") or []
+    reviews = []
+    for r in raw_reviews:
+        user = r.get("user") or {}
+        reviews.append(
+            {
+                "id": r.get("id"),
+                "rating": r.get("rating"),
+                "text": r.get("text"),
+                "time_created": r.get("time_created"),
+                "url": r.get("url"),
+                "user": {
+                    "name": user.get("name"),
+                    "image_url": user.get("image_url"),
+                    "profile_url": user.get("profile_url"),
+                },
+            }
+        )
+
+    return {
+        "yelp_id": yelp_id,
+        "total": len(reviews),
+        "max_available": 3,
+        "reviews": reviews,
+        "note": None,
+    }

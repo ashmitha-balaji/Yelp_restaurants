@@ -8,17 +8,46 @@
 
 ## Using the starter plan
 
-`Yelp-Lab2-LoadTest.jmx` is a minimal skeleton. **Open it in Apache JMeter** and:
+`Yelp-Lab2-LoadTest.jmx` now includes:
 
-1. Add **User Defined Variables**: `BASE_URL` = your gateway host, `BASE_PORT` = `8000`.  
-2. Complete **HTTP Request** bodies: e.g. `POST /auth/login` with JSON `{"email":"...","password":"..."}`.  
-3. Add **Authorization** header from login response (extract `access_token` with JSON Extractor) for protected routes.  
-4. **POST /reviews/** — include a valid `restaurant_id` and JWT.  
-5. Set **Thread Group** thread count to 100, 200, … 500 for separate runs (or use a stepping thread group plugin).  
-6. Add **Summary Report** / **Aggregate Report** listeners; export results CSV for the graph.
+- `POST /auth/signup` (unique user per thread)
+- `POST /auth/login` (captures JWT)
+- `GET /restaurants/`
+- `POST /reviews/` (Kafka async create)
+
+### Pre-run checklist
+
+1. Ensure gateway is reachable on your host (`http://localhost:8000` for Docker compose).
+2. Ensure a valid restaurant exists; note its numeric id (default in plan is `2`).
+3. Keep backend stack running during all concurrency levels.
+
+### Option A: GUI run
+
+Open the plan in Apache JMeter and run with thread counts 100, 200, 300, 400, 500.
+
+### Option B: Headless Docker run (recommended)
+
+From `lab2/jmeter`:
+
+```bash
+./run_phase5.sh
+```
+
+Useful overrides:
+
+```bash
+BASE_URL=host.docker.internal BASE_PORT=8000 RESTAURANT_ID=2 ./run_phase5.sh
+LEVELS="100 300 500" ./run_phase5.sh
+```
+
+Outputs are written to:
+
+- `results/raw_<users>.jtl` (raw samples)
+- `results/html_<users>/index.html` (JMeter HTML report)
+- `results/phase5_summary.csv` (report-ready metrics)
 
 ## Submit
 
 - `.jmx` file  
-- Results summary CSV or screenshots  
+- Results summary CSV or screenshots from JMeter aggregate/summary report
 - Graph + analysis paragraph (in report PDF)

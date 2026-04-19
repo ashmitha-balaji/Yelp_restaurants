@@ -1,33 +1,48 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import { historyAPI, reviewAPI } from '../services/api';
 import { StarDisplay } from '../components/StarRating';
 import { FiEdit2, FiTrash2, FiStar, FiCoffee } from 'react-icons/fi';
+import {
+  removeReviewFromState,
+  selectMyReviews,
+  setMyReviews,
+  setReviewError,
+  setReviewLoading,
+} from '../store/reviewSlice';
 
 export default function MyReviews() {
-  const [reviews, setReviews] = useState([]);
+  const dispatch = useDispatch();
+  const reviews = useSelector(selectMyReviews);
   const [addedRestaurants, setAddedRestaurants] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    dispatch(setReviewLoading(true));
     Promise.allSettled([reviewAPI.getMyReviews(), historyAPI.get()])
       .then(([reviewsRes, historyRes]) => {
         if (reviewsRes.status === 'fulfilled') {
-          setReviews(reviewsRes.value.data || []);
+          dispatch(setMyReviews(reviewsRes.value.data || []));
+        } else {
+          dispatch(setReviewError('Failed to load your reviews.'));
         }
         if (historyRes.status === 'fulfilled') {
           setAddedRestaurants(historyRes.value.data?.restaurants || []);
         }
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+      .finally(() => {
+        dispatch(setReviewLoading(false));
+        setLoading(false);
+      });
+  }, [dispatch]);
 
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this review?')) return;
     try {
       await reviewAPI.delete(id);
-      setReviews(reviews.filter((r) => r.id !== id));
+      dispatch(removeReviewFromState(id));
     } catch {}
   };
 
