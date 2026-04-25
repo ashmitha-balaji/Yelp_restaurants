@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: review-service
-          image: yelp-review-service:latest
-          imagePullPolicy: IfNotPresent
+          image: 839408459700.dkr.ecr.us-west-2.amazonaws.com/yelp-lab2:review-service
+          imagePullPolicy: Always
           ports:
             - containerPort: 8004
           envFrom:

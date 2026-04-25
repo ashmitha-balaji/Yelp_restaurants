@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { restaurantAPI } from '../services/api';
+import { restaurantAPI, aiAPI } from '../services/api';
 import RestaurantCard from '../components/RestaurantCard';
 import RestaurantCardSkeleton from '../components/RestaurantCardSkeleton';
 import RecentActivity from '../components/RecentActivity';
-import { FiSearch, FiFilter, FiMapPin, FiClock, FiDollarSign, FiList } from 'react-icons/fi';
+import { FiSearch, FiFilter, FiMapPin, FiClock, FiDollarSign, FiList, FiSend, FiMessageCircle } from 'react-icons/fi';
 import {
   selectRestaurantList,
   setRestaurantError,
@@ -152,6 +152,32 @@ export default function Home() {
 
   const hasActiveFilters = filters.cuisine_type || filters.city || filters.price_range || search || location;
 
+  // AI Chatbot inline state
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiResponse, setAiResponse] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const SUGGESTED_PROMPTS = [
+    'Best Italian restaurants near me',
+    'Romantic dinner spots in San Jose',
+    'Best sushi under $$',
+    'Top-rated brunch places',
+  ];
+
+  const handleAiSearch = async (query) => {
+    const q = query || aiQuery;
+    if (!q.trim()) return;
+    setAiLoading(true);
+    setAiResponse(null);
+    try {
+      const res = await aiAPI.chat(q, []);
+      setAiResponse(res.data?.message || 'No recommendations found.');
+    } catch {
+      setAiResponse('AI assistant is unavailable right now. Please try again later.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-white">
       {/* Hero Section - Yelp "Top 100 Places to Eat" style */}
@@ -268,6 +294,57 @@ export default function Home() {
                   Clear all filters
                 </button>
               </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* AI Assistant Section */}
+      <section className="bg-gradient-to-r from-yelp-red to-red-700 py-10 px-4">
+        <div className="max-w-3xl mx-auto text-center">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <FiMessageCircle size={24} className="text-white" />
+            <h2 className="text-2xl font-bold text-white">Ask Our AI Restaurant Assistant</h2>
+          </div>
+          <p className="text-red-100 mb-6 text-sm">Get personalized restaurant recommendations powered by AI</p>
+
+          {/* Suggested prompts */}
+          <div className="flex flex-wrap justify-center gap-2 mb-4">
+            {SUGGESTED_PROMPTS.map((prompt) => (
+              <button
+                key={prompt}
+                onClick={() => { setAiQuery(prompt); handleAiSearch(prompt); }}
+                className="bg-white/20 hover:bg-white/30 text-white text-xs px-3 py-1.5 rounded-full transition border border-white/30"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+
+          {/* Input */}
+          <div className="flex gap-2 max-w-xl mx-auto">
+            <input
+              type="text"
+              value={aiQuery}
+              onChange={(e) => setAiQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAiSearch()}
+              placeholder="Ask me anything about restaurants..."
+              className="flex-1 px-4 py-2.5 rounded-lg text-gray-800 text-sm focus:outline-none"
+            />
+            <button
+              onClick={() => handleAiSearch()}
+              disabled={aiLoading}
+              className="bg-white text-yelp-red px-4 py-2.5 rounded-lg font-semibold hover:bg-red-50 transition flex items-center gap-1"
+            >
+              {aiLoading ? <span className="animate-spin">⏳</span> : <FiSend size={16} />}
+              Ask
+            </button>
+          </div>
+
+          {/* AI Response */}
+          {aiResponse && (
+            <div className="mt-4 bg-white/10 border border-white/20 rounded-xl p-4 text-left text-white text-sm max-w-xl mx-auto whitespace-pre-wrap">
+              {aiResponse}
             </div>
           )}
         </div>

@@ -39,6 +39,7 @@ yarn-error.log*
 # -----------------------------
 # Env / Secrets
 # -----------------------------
+lab2/k8s/secret-env.yaml
 .env
 .env.*
 !.env.example

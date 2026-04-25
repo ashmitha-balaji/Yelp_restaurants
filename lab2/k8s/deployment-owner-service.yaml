@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: owner-service
-          image: yelp-owner-service:latest
-          imagePullPolicy: IfNotPresent
+          image: 839408459700.dkr.ecr.us-west-2.amazonaws.com/yelp-lab2:owner-service
+          imagePullPolicy: Always
           ports:
             - containerPort: 8002
           envFrom:

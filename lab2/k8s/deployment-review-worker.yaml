@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: review-worker
-          image: yelp-review-worker:latest
-          imagePullPolicy: IfNotPresent
+          image: 839408459700.dkr.ecr.us-west-2.amazonaws.com/yelp-lab2:review-worker
+          imagePullPolicy: Always
           envFrom:
             - configMapRef:
                 name: yelp-lab2-env
