@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -17,7 +17,17 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
+# HTTPBearer makes Swagger UI show a single "Value" field where you can paste
+# the JWT directly. The OAuth2 password flow form was removed because it
+# required `/auth/token` to exist on every microservice (it only lives on
+# user-service). With HTTPBearer, the same token works across all services.
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _extract_token(creds: Optional[HTTPAuthorizationCredentials]) -> Optional[str]:
+    if creds is None:
+        return None
+    return creds.credentials
 
 
 def hash_password(password: str) -> str:
@@ -47,7 +57,10 @@ def _doc_to_user(doc: dict) -> dict:
     return d
 
 
-def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> dict:
+def get_current_user(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+) -> dict:
+    token = _extract_token(creds)
     if token is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
     try:
@@ -64,7 +77,10 @@ def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> dict:
     return _doc_to_user(doc)
 
 
-def get_optional_user(token: Optional[str] = Depends(oauth2_scheme)) -> Optional[dict]:
+def get_optional_user(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+) -> Optional[dict]:
+    token = _extract_token(creds)
     if token is None:
         return None
     try:

@@ -4,10 +4,19 @@ from __future__ import annotations
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+
+try:
+    from hours_utils import (
+        is_open_now, is_open_at, is_open_for_meal,
+        is_open_late, hours_display, _to_minutes, current_day_and_minutes,
+    )
+    _HOURS_UTILS_AVAILABLE = True
+except ImportError:
+    _HOURS_UTILS_AVAILABLE = False
 
 from mongo_auth import get_current_user, get_optional_user
 from mongo_client import get_db, get_next_id
@@ -99,6 +108,170 @@ def _get_upload_dir() -> str:
         return d
 
 
+# ── Autocomplete ──────────────────────────────────────────────────────────
+
+@router.get("/autocomplete")
+def autocomplete_restaurants(q: str = Query("", min_length=1)):
+    """
+    Returns up to 8 name/cuisine suggestions as the user types.
+    Matches against restaurant name, cuisine_type, and city.
+    """
+    if not q or len(q.strip()) < 1:
+        return []
+
+    db = get_db()
+    pattern = re.escape(q.strip())
+    docs = list(
+        db.restaurants.find(
+            {
+                "$or": [
+                    {"name": {"$regex": pattern, "$options": "i"}},
+                    {"cuisine_type": {"$regex": pattern, "$options": "i"}},
+                    {"city": {"$regex": pattern, "$options": "i"}},
+                ]
+            },
+            {"name": 1, "cuisine_type": 1, "city": 1, "average_rating": 1},
+        )
+        .sort("average_rating", -1)
+        .limit(8)
+    )
+    return [
+        {
+            "id": d["_id"],
+            "name": d.get("name"),
+            "cuisine_type": d.get("cuisine_type"),
+            "city": d.get("city"),
+        }
+        for d in docs
+    ]
+
+
+# ── Trending ───────────────────────────────────────────────────────────────
+
+@router.get("/trending")
+def get_trending_restaurants(days: int = Query(7, ge=1, le=30), limit: int = Query(10, ge=1, le=50)):
+    """
+    Weekly trending leaderboard: restaurants ranked by combined view + review
+    activity in the past `days` days.
+    """
+    db = get_db()
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Count views per restaurant in window
+    view_pipeline = [
+        {"$match": {"viewed_at": {"$gte": since}}},
+        {"$group": {"_id": "$restaurant_id", "views": {"$sum": 1}}},
+    ]
+    view_counts = {r["_id"]: r["views"] for r in db.restaurant_views.aggregate(view_pipeline)}
+
+    # Count reviews per restaurant in window
+    review_pipeline = [
+        {"$match": {"created_at": {"$gte": since}}},
+        {"$group": {"_id": "$restaurant_id", "new_reviews": {"$sum": 1},
+                    "avg_recent_rating": {"$avg": "$rating"}}},
+    ]
+    review_counts = {
+        r["_id"]: {"new_reviews": r["new_reviews"], "avg_recent_rating": round(r["avg_recent_rating"], 2)}
+        for r in db.reviews.aggregate(review_pipeline)
+    }
+
+    # Merge: trending_score = views + new_reviews * 3 (reviews weighted more)
+    all_ids = set(view_counts) | set(review_counts)
+    scored = []
+    for rid in all_ids:
+        v = view_counts.get(rid, 0)
+        rc = review_counts.get(rid, {})
+        score = v + rc.get("new_reviews", 0) * 3
+        scored.append((rid, score, v, rc))
+
+    scored.sort(key=lambda x: -x[1])
+    top_ids = [s[0] for s in scored[:limit]]
+
+    if not top_ids:
+        return []
+
+    docs = {d["_id"]: d for d in db.restaurants.find({"_id": {"$in": top_ids}})}
+    result = []
+    for i, (rid, score, views, rc) in enumerate(scored[:limit]):
+        doc = docs.get(rid)
+        if not doc:
+            continue
+        result.append({
+            **_rest_resp(doc),
+            "trending_rank": i + 1,
+            "trending_score": score,
+            "recent_views": views,
+            "recent_reviews": rc.get("new_reviews", 0),
+            "recent_avg_rating": rc.get("avg_recent_rating"),
+        })
+    return result
+
+
+# ── Open-now shortcut ─────────────────────────────────────────────────────
+
+@router.get("/open-now")
+def get_open_now_restaurants(
+    city: Optional[str] = Query(None),
+    cuisine_type: Optional[str] = Query(None),
+    at_time: Optional[str] = Query(None, description="Override time as HH:MM (24h), e.g. 20:30"),
+    for_meal: Optional[str] = Query(None, description="e.g. breakfast, lunch, dinner, late"),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """
+    Return restaurants that are currently open (or open at a specific time/meal).
+
+    Query params:
+      - at_time   : check a specific time today, e.g. '20:30'
+      - for_meal  : breakfast | brunch | lunch | dinner | late | tonight
+      - city      : filter by city
+      - cuisine_type : filter by cuisine
+    """
+    if not _HOURS_UTILS_AVAILABLE:
+        raise HTTPException(503, "Hours utility not available")
+
+    db = get_db()
+    filt: dict = {}
+    if city:
+        filt["city"] = {"$regex": re.escape(_parse_city(city)), "$options": "i"}
+    if cuisine_type:
+        filt["cuisine_type"] = {"$regex": re.escape(cuisine_type), "$options": "i"}
+
+    # Fetch a broad set; we'll filter by hours in Python
+    docs = list(db.restaurants.find(filt).sort("average_rating", -1).limit(limit * 5))
+
+    now = datetime.now()
+    day, cur_minutes = current_day_and_minutes(now)
+
+    if at_time:
+        check_minutes = _to_minutes(at_time)
+        if check_minutes < 0:
+            raise HTTPException(422, "at_time must be HH:MM format, e.g. 20:30")
+    else:
+        check_minutes = cur_minutes
+
+    open_docs = []
+    for doc in docs:
+        hours_raw = doc.get("hours_of_operation")
+        if hours_raw is None:
+            continue  # skip restaurants without hours data
+
+        if for_meal:
+            result = is_open_for_meal(hours_raw, for_meal, now)
+        else:
+            result = is_open_at(hours_raw, day, check_minutes)
+
+        if result is True:
+            resp = _rest_resp(doc)
+            resp["hours_today"] = hours_display(hours_raw)
+            resp["is_open_now"] = True
+            open_docs.append(resp)
+
+        if len(open_docs) >= limit:
+            break
+
+    return open_docs
+
+
 # Must be registered before /{restaurant_id} so the path doesn't swallow it
 @router.get("/owner/my-restaurants")
 def get_owner_restaurants(current_user: dict = Depends(get_current_user)):
@@ -114,6 +287,9 @@ def search_restaurants(
     zip_code: Optional[str] = Query(None),
     keyword: Optional[str] = Query(None),
     price_range: Optional[str] = Query(None),
+    open_now: bool = Query(False, description="Only return currently open restaurants"),
+    open_for: Optional[str] = Query(None, description="breakfast | lunch | dinner | late | tonight"),
+    at_time: Optional[str] = Query(None, description="Check open status at HH:MM today"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
 ):
@@ -140,6 +316,35 @@ def search_restaurants(
             {"amenities": {"$regex": kw, "$options": "i"}},
             {"ambiance": {"$regex": kw, "$options": "i"}},
         ]
+
+    needs_hours_filter = (open_now or open_for or at_time) and _HOURS_UTILS_AVAILABLE
+
+    if needs_hours_filter:
+        # Fetch more docs so we have enough after hours filtering
+        docs = list(db.restaurants.find(filt).sort("average_rating", -1).limit(limit * 10))
+        now_dt = datetime.now()
+        day, cur_minutes = current_day_and_minutes(now_dt)
+        check_minutes = _to_minutes(at_time) if at_time else cur_minutes
+
+        filtered = []
+        for doc in docs:
+            hours_raw = doc.get("hours_of_operation")
+            if hours_raw is None:
+                continue
+            if open_for:
+                result = is_open_for_meal(hours_raw, open_for, now_dt)
+            else:
+                result = is_open_at(hours_raw, day, check_minutes)
+            if result is True:
+                r = _rest_resp(doc)
+                r["hours_today"] = hours_display(hours_raw)
+                r["is_open_now"] = True
+                filtered.append(r)
+            if len(filtered) >= limit * 3:
+                break
+
+        skip = (page - 1) * limit
+        return filtered[skip: skip + limit]
 
     skip = (page - 1) * limit
     docs = list(

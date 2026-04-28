@@ -14,6 +14,8 @@ export default function WriteReview() {
   const [restaurant, setRestaurant] = useState(null);
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState('');
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
@@ -155,16 +157,52 @@ export default function WriteReview() {
     [restaurantReviews, editId]
   );
 
+  const handlePhotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) { setPhotoFile(null); setPhotoPreview(null); return; }
+    setPhotoFile(file);
+    setPhotoPreview(URL.createObjectURL(file));
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (rating === 0) { setError('Please select a rating'); return; }
     setLoading(true);
     setError('');
     try {
+      let reviewId = editId;
+      let jobInfo = null;
       if (editId) {
         await reviewAPI.update(editId, { rating, comment });
       } else {
-        await reviewAPI.create({ restaurant_id: parseInt(restaurantId), rating, comment });
+        const res = await reviewAPI.create({ restaurant_id: parseInt(restaurantId), rating, comment });
+        // Async create returns either {id, ...} or {job_id, ...}; poll for the
+        // final review id so we can attach the photo
+        if (res.data?.id) {
+          reviewId = res.data.id;
+        } else if (res.data?.job_id) {
+          jobInfo = res.data.job_id;
+          for (let i = 0; i < 10; i++) {
+            await new Promise(r => setTimeout(r, 600));
+            try {
+              const j = await reviewAPI.getJob(jobInfo);
+              if (j.data?.review_id || j.data?.result?.id) {
+                reviewId = j.data.review_id || j.data.result.id;
+                break;
+              }
+            } catch {}
+          }
+        }
+      }
+      // Upload photo if attached and we have a review id
+      if (photoFile && reviewId) {
+        const fd = new FormData();
+        fd.append('file', photoFile);
+        try {
+          await reviewAPI.uploadPhoto(reviewId, fd);
+        } catch (uploadErr) {
+          console.warn('Photo upload failed:', uploadErr);
+        }
       }
       navigate(`/restaurant/${restaurantId}`);
     } catch (err) {
@@ -301,6 +339,41 @@ export default function WriteReview() {
                   placeholder="Share details of your visit..."
                 />
               </div>
+
+              {/* Photo upload */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">📷 Attach a photo (optional)</label>
+                <div className="flex items-center gap-4">
+                  <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition">
+                    <span>Choose file</span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/gif,image/webp"
+                      onChange={handlePhotoChange}
+                      className="hidden"
+                    />
+                  </label>
+                  {photoFile && (
+                    <span className="text-sm text-gray-500 truncate max-w-xs">{photoFile.name}</span>
+                  )}
+                  {photoFile && (
+                    <button
+                      type="button"
+                      onClick={() => { setPhotoFile(null); setPhotoPreview(null); }}
+                      className="text-sm text-yelp-red hover:underline"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                {photoPreview && (
+                  <div className="mt-3">
+                    <img src={photoPreview} alt="Preview" className="max-h-48 rounded-lg border border-gray-200 object-cover" />
+                  </div>
+                )}
+                <p className="text-xs text-gray-500 mt-2">JPG, PNG, GIF, or WebP, up to 10 MB.</p>
+              </div>
+
               <div className="flex flex-wrap gap-3">
                 <button type="submit" disabled={loading} className="bg-yelp-red text-white px-6 py-3 rounded-lg font-semibold hover:bg-yelp-dark transition disabled:opacity-50">
                   {loading ? 'Submitting...' : editId ? 'Update Review' : 'Post Review'}

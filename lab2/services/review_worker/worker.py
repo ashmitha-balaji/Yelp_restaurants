@@ -74,6 +74,22 @@ def handle_create(db, payload: dict) -> None:
     _recalculate_rating(db, restaurant_id)
     mark_done(job_id, review_id)
 
+    # ── Notify restaurant owner ────────────────────────────────────────────
+    try:
+        from notification_client import notify_owner_new_review
+        reviewer = db.users.find_one({"_id": user_id}, {"name": 1}) or {}
+        restaurant = db.restaurants.find_one({"_id": restaurant_id}, {"name": 1}) or {}
+        notify_owner_new_review(
+            restaurant_id=restaurant_id,
+            restaurant_name=restaurant.get("name", "your restaurant"),
+            reviewer_name=reviewer.get("name", "Someone"),
+            rating=payload["rating"],
+            comment=payload.get("comment"),
+            review_id=review_id,
+        )
+    except Exception as e:
+        print(f"[review_worker] Notification error: {e}", flush=True)
+
 
 def handle_update(db, payload: dict) -> None:
     review_id = payload["review_id"]
@@ -109,9 +125,18 @@ def handle_delete(db, payload: dict) -> None:
     mark_done(job_id, review_id)
 
 
+def handle_waitlist_joined(db, payload: dict) -> None:
+    """Log waitlist join events for trending/analytics (payload already saved by API)."""
+    print(
+        f"[review_worker] waitlist.joined: restaurant={payload.get('restaurant_id')} "
+        f"user={payload.get('user_id')} pos={payload.get('position')}",
+        flush=True,
+    )
+
+
 def run() -> None:
     servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092").split(",")
-    topics = ["review.created", "review.updated", "review.deleted"]
+    topics = ["review.created", "review.updated", "review.deleted", "waitlist.joined"]
     consumer = KafkaConsumer(
         *topics,
         bootstrap_servers=servers,
@@ -127,8 +152,11 @@ def run() -> None:
             continue
         db = get_db()
         try:
-            action = payload.get("action") or msg.topic.split(".")[-1]
-            if action == "create":
+            topic = msg.topic
+            action = payload.get("action") or topic.split(".")[-1]
+            if topic == "waitlist.joined":
+                handle_waitlist_joined(db, payload)
+            elif action == "create":
                 handle_create(db, payload)
             elif action == "update":
                 handle_update(db, payload)

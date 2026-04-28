@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { API_BASE } from '../services/api';
+import { API_BASE, notificationAPI } from '../services/api';
 import YelpLogo from './YelpLogo';
-import { FiMenu, FiX, FiUser, FiHeart, FiStar, FiLogOut, FiSettings, FiGrid, FiSearch, FiChevronDown } from 'react-icons/fi';
+import { FiMenu, FiX, FiUser, FiHeart, FiStar, FiLogOut, FiSettings, FiGrid, FiSearch, FiChevronDown, FiBell } from 'react-icons/fi';
 
 const CATEGORIES = ['Restaurants'];
 
@@ -14,6 +14,52 @@ export default function Navbar() {
   const [searchParams] = useSearchParams();
   const [menuOpen, setMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [notifMenuOpen, setNotifMenuOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState([]);
+  const notifMenuRef = useRef(null);
+
+  // Poll for unread notification count
+  useEffect(() => {
+    if (!user) { setUnreadCount(0); return; }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const r = await notificationAPI.unreadCount();
+        if (!cancelled) setUnreadCount(r.data?.unread_count || 0);
+      } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [user]);
+
+  // Close notification dropdown on outside click
+  useEffect(() => {
+    const onClickAway = (e) => {
+      if (notifMenuRef.current && !notifMenuRef.current.contains(e.target)) setNotifMenuOpen(false);
+    };
+    if (notifMenuOpen) document.addEventListener('mousedown', onClickAway);
+    return () => document.removeEventListener('mousedown', onClickAway);
+  }, [notifMenuOpen]);
+
+  const openNotifications = async () => {
+    setNotifMenuOpen(!notifMenuOpen);
+    if (!notifMenuOpen) {
+      try {
+        const r = await notificationAPI.list({ limit: 10 });
+        setNotifications(r.data?.notifications || r.data || []);
+      } catch {}
+    }
+  };
+
+  const markAllRead = async () => {
+    try {
+      await notificationAPI.markAllRead();
+      setUnreadCount(0);
+      setNotifications(notifications.map((n) => ({ ...n, is_read: true, read: true })));
+    } catch {}
+  };
   const [searchInput, setSearchInput] = useState('');
   const [locationInput, setLocationInput] = useState('');
   // Hide top navbar search on home page (Home already has its own search UI)
@@ -119,6 +165,63 @@ export default function Navbar() {
               <Link to="/add-restaurant" className="text-gray-700 hover:text-yelp-red px-3 py-2 text-sm transition">
                 Start a Project
               </Link>
+              {user && (
+                <div ref={notifMenuRef} className="relative ml-2">
+                  <button
+                    onClick={openNotifications}
+                    className="relative flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 hover:border-yelp-red transition"
+                    title="Notifications"
+                  >
+                    <FiBell size={18} className="text-gray-700" />
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-yelp-red text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </span>
+                    )}
+                  </button>
+                  {notifMenuOpen && (
+                    <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-xl py-2 border border-gray-100 max-h-96 overflow-auto">
+                      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100">
+                        <span className="text-sm font-semibold text-gray-900">Notifications</span>
+                        {unreadCount > 0 && (
+                          <button onClick={markAllRead} className="text-xs text-yelp-red hover:underline">
+                            Mark all read
+                          </button>
+                        )}
+                      </div>
+                      {notifications.length === 0 ? (
+                        <div className="px-4 py-6 text-center text-sm text-gray-500">No notifications yet</div>
+                      ) : (
+                        notifications.map((n) => {
+                          const isRead = n.is_read ?? n.read ?? false;
+                          const title = n.title || n.subject || '(no subject)';
+                          return (
+                            <div
+                              key={n.id || n._id}
+                              className={`px-4 py-3 border-b border-gray-50 last:border-b-0 ${isRead ? 'bg-white' : 'bg-red-50/50'}`}
+                            >
+                              <div className="flex items-start gap-2">
+                                {!isRead && <span className="w-2 h-2 mt-1.5 rounded-full bg-yelp-red flex-shrink-0" />}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-900">{title}</p>
+                                  {n.body && (
+                                    <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-line line-clamp-3">
+                                      {n.body}
+                                    </p>
+                                  )}
+                                  {n.created_at && (
+                                    <p className="text-xs text-gray-400 mt-1">{new Date(n.created_at).toLocaleString()}</p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               {user ? (
                 <div ref={userMenuRef} className="relative ml-2">
                   <button

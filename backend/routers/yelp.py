@@ -43,8 +43,12 @@ async def search_yelp(
     city: str | None = Query(None, description="City or zip (e.g. San Jose, CA)"),
     limit: int = Query(20, ge=1, le=50),
 ):
+    # Yelp Fusion trial-tier access was sunset in 2024; commercial licensing is
+    # required to call this API now. When the key is missing or the key has
+    # expired/been revoked, we fall back to an empty result so the frontend
+    # silently degrades to local-only results instead of surfacing an error.
     if not YELP_API_KEY:
-        raise HTTPException(503, "YELP_API_KEY not configured in backend 2 .env")
+        return {"restaurants": []}
 
     search_term = (term or "restaurants").strip()
     raw = (city or "San Jose, CA").strip()
@@ -54,24 +58,19 @@ async def search_yelp(
     else:
         location = raw
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(
-            f"{YELP_BASE}/businesses/search",
-            params={"term": search_term, "location": location, "limit": limit},
-            headers={"Authorization": f"Bearer {YELP_API_KEY}"},
-        )
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{YELP_BASE}/businesses/search",
+                params={"term": search_term, "location": location, "limit": limit},
+                headers={"Authorization": f"Bearer {YELP_API_KEY}"},
+            )
+    except Exception:
+        return {"restaurants": []}
 
-    if resp.status_code == 401:
-        raise HTTPException(503, "Invalid Yelp API key")
+    # Any non-200 (expired trial, invalid key, rate limit, etc.) → graceful empty
     if resp.status_code != 200:
-        detail = str(resp.status_code)
-        try:
-            err_body = resp.json()
-            if isinstance(err_body.get("error"), dict):
-                detail = err_body["error"].get("description", detail)
-        except Exception:
-            pass
-        raise HTTPException(502, f"Yelp API error: {detail}")
+        return {"restaurants": []}
 
     data = resp.json()
     businesses = data.get("businesses") or []

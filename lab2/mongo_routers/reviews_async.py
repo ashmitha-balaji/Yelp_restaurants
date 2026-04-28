@@ -1,13 +1,20 @@
 """
 Lab 2: Review mutations go through Kafka; GET endpoints are synchronous MongoDB reads.
 Replaces the root-level review_async_router.py for Lab 2 MongoDB-backed services.
+
+New in v2.1:
+  POST /reviews/{id}/photo      — attach a photo to a review
+  POST /reviews/{id}/reply      — owner posts a public reply
+  DELETE /reviews/{id}/reply    — owner removes their reply
 """
 from __future__ import annotations
 
+import os
 import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
@@ -63,6 +70,7 @@ def _review_resp(r: dict) -> dict:
     rest = db.restaurants.find_one({"_id": r["restaurant_id"]}, {"name": 1}) or {}
     created = r.get("created_at")
     updated = r.get("updated_at")
+    owner_reply_at = r.get("owner_reply_at")
     return {
         "id": r["_id"],
         "user_id": r["user_id"],
@@ -74,7 +82,20 @@ def _review_resp(r: dict) -> dict:
         "updated_at": updated.isoformat() if updated else None,
         "user_name": user.get("name"),
         "restaurant_name": rest.get("name"),
+        # Owner reply fields
+        "owner_reply": r.get("owner_reply"),
+        "owner_reply_at": owner_reply_at.isoformat() if owner_reply_at else None,
     }
+
+
+def _get_upload_dir() -> str:
+    try:
+        from config import UPLOAD_DIR
+        return UPLOAD_DIR
+    except ImportError:
+        d = os.path.join(os.path.dirname(__file__), "..", "..", "..", "backend", "uploads")
+        os.makedirs(d, exist_ok=True)
+        return d
 
 
 @router.get("/recent")
@@ -222,3 +243,133 @@ def delete_review_async(review_id: int, current_user: dict = Depends(get_current
         status_code=202,
         content={"status": "accepted", "job_id": job_id, "message": "Review deletion queued"},
     )
+
+
+# ── Review photo upload ────────────────────────────────────────────────────
+
+@router.post("/{review_id}/photo")
+async def upload_review_photo(
+    review_id: int,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Attach a photo to an existing review (only the review author can do this)."""
+    db = get_db()
+    review = db.reviews.find_one({"_id": review_id})
+    if not review:
+        raise HTTPException(404, "Review not found")
+    if review["user_id"] != current_user["id"]:
+        raise HTTPException(403, "Only the review author can add a photo")
+
+    upload_dir = _get_upload_dir()
+    ext = os.path.splitext(file.filename or ".jpg")[1].lower()
+    allowed_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    if ext not in allowed_exts:
+        raise HTTPException(422, f"File type not allowed. Use: {', '.join(allowed_exts)}")
+
+    filename = f"review_{review_id}_{uuid.uuid4().hex}{ext}"
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:  # 10 MB limit
+        raise HTTPException(413, "File too large. Maximum size is 10 MB")
+
+    with open(os.path.join(upload_dir, filename), "wb") as f:
+        f.write(contents)
+
+    photo_url = f"/uploads/{filename}"
+    db.reviews.update_one(
+        {"_id": review_id},
+        {"$set": {"photo_url": photo_url, "updated_at": datetime.now(timezone.utc)}},
+    )
+    return {"photo_url": photo_url, "review_id": review_id}
+
+
+# ── Owner reply to reviews ─────────────────────────────────────────────────
+
+class OwnerReplyRequest(BaseModel):
+    reply: str
+
+    @classmethod
+    def validate_reply(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Reply cannot be empty")
+        if len(v) > 2000:
+            raise ValueError("Reply must be 2000 characters or fewer")
+        return v.strip()
+
+
+@router.post("/{review_id}/reply")
+def post_owner_reply(
+    review_id: int,
+    data: OwnerReplyRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Restaurant owner publicly replies to a review.
+    The owner must own the restaurant the review is about.
+    """
+    if current_user["role"] != "owner":
+        raise HTTPException(403, "Only restaurant owners can reply to reviews")
+
+    db = get_db()
+    review = db.reviews.find_one({"_id": review_id})
+    if not review:
+        raise HTTPException(404, "Review not found")
+
+    # Verify the owner owns this restaurant
+    restaurant = db.restaurants.find_one({"_id": review["restaurant_id"]})
+    if not restaurant or restaurant.get("owner_id") != current_user["id"]:
+        raise HTTPException(403, "You can only reply to reviews of your own restaurants")
+
+    reply_text = data.reply.strip()
+    if not reply_text:
+        raise HTTPException(422, "Reply text cannot be empty")
+
+    now = datetime.now(timezone.utc)
+    db.reviews.update_one(
+        {"_id": review_id},
+        {"$set": {"owner_reply": reply_text, "owner_reply_at": now, "updated_at": now}},
+    )
+
+    # Notify the reviewer
+    try:
+        from notification_client import notify_owner_reply_posted
+        notify_owner_reply_posted(
+            review_id=review_id,
+            reviewer_user_id=review["user_id"],
+            restaurant_name=restaurant.get("name", "the restaurant"),
+            reply_text=reply_text,
+        )
+    except Exception:
+        pass
+
+    updated = db.reviews.find_one({"_id": review_id})
+    return _review_resp(updated)
+
+
+@router.delete("/{review_id}/reply", status_code=200)
+def delete_owner_reply(
+    review_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Owner removes their reply from a review."""
+    if current_user["role"] != "owner":
+        raise HTTPException(403, "Only restaurant owners can manage review replies")
+
+    db = get_db()
+    review = db.reviews.find_one({"_id": review_id})
+    if not review:
+        raise HTTPException(404, "Review not found")
+
+    restaurant = db.restaurants.find_one({"_id": review["restaurant_id"]})
+    if not restaurant or restaurant.get("owner_id") != current_user["id"]:
+        raise HTTPException(403, "You can only manage replies on your own restaurants")
+
+    if not review.get("owner_reply"):
+        raise HTTPException(404, "No reply exists on this review")
+
+    db.reviews.update_one(
+        {"_id": review_id},
+        {"$unset": {"owner_reply": "", "owner_reply_at": ""},
+         "$set": {"updated_at": datetime.now(timezone.utc)}},
+    )
+    return {"message": "Reply removed"}

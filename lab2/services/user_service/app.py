@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import UPLOAD_DIR
 from db_init import init_mongo_db
-from mongo_routers import auth, favorites, history, users
+from mongo_routers import auth, favorites, history, notifications, users
 
 init_mongo_db()
 
@@ -33,6 +33,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(favorites.router)
 app.include_router(history.router)
+app.include_router(notifications.router)
 
 
 @app.get("/health")

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { restaurantAPI, reviewAPI, favoriteAPI, API_BASE } from '../services/api';
+import { restaurantAPI, reviewAPI, favoriteAPI, waitlistAPI, API_BASE } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { StarDisplay } from '../components/StarRating';
 import { getRestaurantImageUrl } from '../utils/placeholderImages';
@@ -37,6 +37,10 @@ export default function RestaurantDetails() {
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
   const [claimMsg, setClaimMsg] = useState('');
+  const [waitlistInfo, setWaitlistInfo] = useState(null);
+  const [partySize, setPartySize] = useState(2);
+  const [waitlistMsg, setWaitlistMsg] = useState('');
+  const [replyDraft, setReplyDraft] = useState({});
 
   useEffect(() => {
     const fetchData = async () => {
@@ -56,6 +60,11 @@ export default function RestaurantDetails() {
             const favRes = await favoriteAPI.check(id);
             dispatch(setFavouriteStatus({ restaurantId, isFavorite: favRes.data.is_favorite }));
           } catch {}
+          // Load waitlist status
+          try {
+            const w = await waitlistAPI.status(id);
+            setWaitlistInfo(w.data);
+          } catch {}
         }
       } catch (err) {
         console.error('Failed to fetch restaurant:', err);
@@ -66,6 +75,43 @@ export default function RestaurantDetails() {
     };
     fetchData();
   }, [dispatch, id, restaurantId, user]);
+
+  const handleJoinWaitlist = async () => {
+    setWaitlistMsg('');
+    try {
+      const res = await waitlistAPI.join(id, { party_size: partySize, notes: '' });
+      setWaitlistMsg(res.data?.message || `Joined! You are #${res.data?.position} in queue.`);
+      const w = await waitlistAPI.status(id);
+      setWaitlistInfo(w.data);
+    } catch (err) {
+      setWaitlistMsg(err.response?.data?.detail || 'Failed to join waitlist.');
+    }
+  };
+
+  const handleLeaveWaitlist = async () => {
+    try {
+      await waitlistAPI.leave(id);
+      setWaitlistMsg('Left waitlist.');
+      const w = await waitlistAPI.status(id);
+      setWaitlistInfo(w.data);
+    } catch (err) {
+      setWaitlistMsg(err.response?.data?.detail || 'Failed to leave waitlist.');
+    }
+  };
+
+  const handlePostReply = async (reviewId) => {
+    const text = (replyDraft[reviewId] || '').trim();
+    if (!text) return;
+    try {
+      await reviewAPI.reply(reviewId, text);
+      setReplyDraft({ ...replyDraft, [reviewId]: '' });
+      // Reload reviews
+      const revRes = await reviewAPI.getForRestaurant(id);
+      dispatch(setRestaurantReviews({ restaurantId, reviews: revRes.data || [] }));
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Failed to post reply.');
+    }
+  };
 
   const toggleFavorite = async () => {
     try {
@@ -225,7 +271,25 @@ export default function RestaurantDetails() {
             )}
             {restaurant.hours_of_operation && (
               <div className="flex items-start space-x-2 text-gray-600">
-                <FiClock className="mt-1 flex-shrink-0" /><span>{restaurant.hours_of_operation}</span>
+                <FiClock className="mt-1 flex-shrink-0" />
+                <div className="flex-1">
+                  {typeof restaurant.hours_of_operation === 'string' ? (
+                    <span>{restaurant.hours_of_operation}</span>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-4 text-sm">
+                      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => {
+                        const h = restaurant.hours_of_operation[day];
+                        const closed = (restaurant.hours_of_operation.closed_days || []).includes(day);
+                        return (
+                          <div key={day} className="flex justify-between gap-2">
+                            <span className="font-medium text-gray-700">{day}</span>
+                            <span>{closed ? 'Closed' : (h ? `${h.open} – ${h.close}` : '—')}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -238,6 +302,51 @@ export default function RestaurantDetails() {
                   <span key={opt} className="bg-green-50 text-green-700 px-2 py-1 rounded-full text-xs">{opt.trim()}</span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Waitlist Section */}
+          {user && (
+            <div className="mb-6 border-t border-gray-200 pt-6">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">🍽️ Join the Waitlist</h3>
+              {waitlistInfo?.in_queue ? (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-sm text-blue-900 font-medium">
+                    You are <strong>#{waitlistInfo.position}</strong> in queue
+                    {waitlistInfo.queue_length > 0 && ` (of ${waitlistInfo.queue_length})`}
+                  </p>
+                  {waitlistInfo.entry?.party_size && (
+                    <p className="text-xs text-blue-700 mt-1">Party of {waitlistInfo.entry.party_size}</p>
+                  )}
+                  <button
+                    onClick={handleLeaveWaitlist}
+                    className="mt-3 text-sm bg-white text-yelp-red border border-yelp-red px-4 py-1.5 rounded-lg hover:bg-red-50"
+                  >
+                    Leave waitlist
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="text-sm text-gray-600">Party size:</label>
+                  <select
+                    value={partySize}
+                    onChange={(e) => setPartySize(parseInt(e.target.value))}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-yelp-red"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <button
+                    onClick={handleJoinWaitlist}
+                    className="bg-yelp-red text-white text-sm px-4 py-1.5 rounded-lg font-medium hover:bg-yelp-dark transition"
+                  >
+                    Join waitlist
+                  </button>
+                  {waitlistInfo && waitlistInfo.queue_length > 0 && (
+                    <span className="text-xs text-gray-500">{waitlistInfo.queue_length} in queue ahead of you</span>
+                  )}
+                </div>
+              )}
+              {waitlistMsg && <p className="text-xs text-gray-600 mt-2">{waitlistMsg}</p>}
             </div>
           )}
         </div>
@@ -286,6 +395,42 @@ export default function RestaurantDetails() {
                   )}
                 </div>
                 {review.comment && <p className="text-gray-700 leading-relaxed">{review.comment}</p>}
+                {review.photo_url && (
+                  <div className="mt-3">
+                    <img
+                      src={`${API_BASE}${review.photo_url}`}
+                      alt="Review"
+                      className="max-h-64 rounded-lg border border-gray-200 object-cover"
+                    />
+                  </div>
+                )}
+                {review.owner_reply && (
+                  <div className="mt-4 ml-4 border-l-4 border-yelp-red pl-4 py-2 bg-red-50 rounded-r-lg">
+                    <div className="text-xs font-semibold text-yelp-red mb-1">Response from owner</div>
+                    <p className="text-sm text-gray-700">{review.owner_reply}</p>
+                    {review.owner_reply_at && (
+                      <p className="text-xs text-gray-500 mt-1">{new Date(review.owner_reply_at).toLocaleDateString()}</p>
+                    )}
+                  </div>
+                )}
+                {/* Owner reply form (only visible to the restaurant's owner) */}
+                {user && user.role === 'owner' && restaurant.owner_id === user.id && !review.owner_reply && (
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Reply as owner..."
+                      value={replyDraft[review.id] || ''}
+                      onChange={(e) => setReplyDraft({ ...replyDraft, [review.id]: e.target.value })}
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yelp-red"
+                    />
+                    <button
+                      onClick={() => handlePostReply(review.id)}
+                      className="bg-yelp-red text-white text-sm px-4 py-2 rounded-lg hover:bg-yelp-dark transition"
+                    >
+                      Post Reply
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

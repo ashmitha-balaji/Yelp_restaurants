@@ -34,6 +34,14 @@ data:
             proxy_set_header Host $host;
             proxy_set_header Authorization $http_authorization;
         }
+        # Route uploads by filename prefix:
+        #   review_*  → review-service (where review photos are saved)
+        #   profile_* (default) → user-service (where profile photos are saved)
+        location ~ ^/uploads/review_ {
+            proxy_pass http://review-service:8004;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+        }
         location /uploads {
             proxy_pass http://user-service:8001;
             proxy_http_version 1.1;
@@ -59,6 +67,18 @@ data:
         }
         location /reviews {
             proxy_pass http://review-service:8004;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header Authorization $http_authorization;
+        }
+        location /waitlist {
+            proxy_pass http://review-service:8004;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header Authorization $http_authorization;
+        }
+        location /notifications {
+            proxy_pass http://user-service:8001;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header Authorization $http_authorization;
@@ -98,11 +118,14 @@ kind: Service
 metadata:
   name: gateway
   namespace: yelp-lab2
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
     app: gateway
   ports:
     - port: 8000
       targetPort: 8000
-      nodePort: 30080

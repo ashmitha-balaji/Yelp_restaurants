@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { restaurantAPI, aiAPI } from '../services/api';
+import { restaurantAPI, aiAPI, trendingAPI } from '../services/api';
 import RestaurantCard from '../components/RestaurantCard';
 import RestaurantCardSkeleton from '../components/RestaurantCardSkeleton';
 import RecentActivity from '../components/RecentActivity';
@@ -88,15 +88,21 @@ export default function Home() {
     const yelpWithoutImages = yelpRestaurants.filter((r) => !r.image_url);
     const combined = [...yelpWithImages, ...localRestaurants, ...yelpWithoutImages];
 
-    const seen = new Set();
-    const deduped = combined.filter((r) => {
-      const key = r.yelp_id
-        ? `yelp:${r.yelp_id}`
-        : `local:${(r.name || '').trim().toLowerCase()}|${(r.city || '').trim().toLowerCase()}|${(r.address || '').trim().toLowerCase()}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
+    // Dedup by normalised (name|city) so multiple Yelp branches with the same
+    // name in the same city collapse to one entry (the most popular one wins).
+    // Local restaurants (which have a real address) are still also deduped on
+    // address as a tiebreaker against Yelp results that share the same name.
+    const groupKey = (r) => `${(r.name || '').trim().toLowerCase()}|${(r.city || '').trim().toLowerCase()}`;
+    const reviewCount = (r) => Number(r.review_count || 0);
+    const buckets = new Map();
+    combined.forEach((r) => {
+      const k = groupKey(r);
+      const existing = buckets.get(k);
+      if (!existing || reviewCount(r) > reviewCount(existing)) {
+        buckets.set(k, r);
+      }
     });
+    const deduped = Array.from(buckets.values());
 
     dispatch(setRestaurantList({
       restaurants: deduped.slice(0, 20),
@@ -151,6 +157,14 @@ export default function Home() {
   };
 
   const hasActiveFilters = filters.cuisine_type || filters.city || filters.price_range || search || location;
+
+  // Trending restaurants
+  const [trending, setTrending] = useState([]);
+  useEffect(() => {
+    trendingAPI.list({ limit: 6 })
+      .then((r) => setTrending(r.data || []))
+      .catch(() => {});
+  }, []);
 
   // AI Chatbot inline state
   const [aiQuery, setAiQuery] = useState('');
@@ -299,60 +313,38 @@ export default function Home() {
         </div>
       </section>
 
-      {/* AI Assistant Section */}
-      <section className="bg-gradient-to-r from-yelp-red to-red-700 py-10 px-4">
-        <div className="max-w-3xl mx-auto text-center">
-          <div className="flex items-center justify-center gap-2 mb-2">
-            <FiMessageCircle size={24} className="text-white" />
-            <h2 className="text-2xl font-bold text-white">Ask Our AI Restaurant Assistant</h2>
-          </div>
-          <p className="text-red-100 mb-6 text-sm">Get personalized restaurant recommendations powered by AI</p>
-
-          {/* Suggested prompts */}
-          <div className="flex flex-wrap justify-center gap-2 mb-4">
-            {SUGGESTED_PROMPTS.map((prompt) => (
-              <button
-                key={prompt}
-                onClick={() => { setAiQuery(prompt); handleAiSearch(prompt); }}
-                className="bg-white/20 hover:bg-white/30 text-white text-xs px-3 py-1.5 rounded-full transition border border-white/30"
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
-
-          {/* Input */}
-          <div className="flex gap-2 max-w-xl mx-auto">
-            <input
-              type="text"
-              value={aiQuery}
-              onChange={(e) => setAiQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleAiSearch()}
-              placeholder="Ask me anything about restaurants..."
-              className="flex-1 px-4 py-2.5 rounded-lg text-gray-800 text-sm focus:outline-none"
-            />
-            <button
-              onClick={() => handleAiSearch()}
-              disabled={aiLoading}
-              className="bg-white text-yelp-red px-4 py-2.5 rounded-lg font-semibold hover:bg-red-50 transition flex items-center gap-1"
-            >
-              {aiLoading ? <span className="animate-spin">⏳</span> : <FiSend size={16} />}
-              Ask
-            </button>
-          </div>
-
-          {/* AI Response */}
-          {aiResponse && (
-            <div className="mt-4 bg-white/10 border border-white/20 rounded-xl p-4 text-left text-white text-sm max-w-xl mx-auto whitespace-pre-wrap">
-              {aiResponse}
-            </div>
-          )}
-        </div>
-      </section>
-
       {/* Main content */}
       <div className="flex-1 flex min-h-0 bg-gray-50">
         <div className="flex-1 overflow-auto w-full">
+          {/* Trending Section */}
+          {!hasActiveFilters && trending.length > 0 && (
+            <div className="max-w-5xl mx-auto px-4 pt-8">
+              <div className="flex items-center gap-2 mb-4">
+                <h2 className="text-xl font-bold text-gray-900">🔥 Trending This Week</h2>
+                <span className="text-xs bg-yelp-red text-white px-2 py-0.5 rounded-full">Hot</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-2">
+                {trending.slice(0, 6).map((r, i) => (
+                  <Link
+                    key={r.id}
+                    to={`/restaurant/${r.id}`}
+                    className="bg-white rounded-xl shadow-sm hover:shadow-md transition border border-gray-100 p-4 flex items-start gap-3"
+                  >
+                    <div className="text-2xl font-bold text-yelp-red w-8">#{r.trending_rank || (i + 1)}</div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-gray-900 truncate">{r.name}</h3>
+                      <p className="text-xs text-gray-500">{r.cuisine_type} • {r.city}</p>
+                      <div className="flex items-center gap-3 mt-2 text-xs text-gray-600">
+                        <span>👁 {r.recent_views || 0} views</span>
+                        <span>📝 {r.recent_reviews || 0} new reviews</span>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Restaurant results */}
           <div id="restaurant-results" className="max-w-5xl mx-auto px-4 py-8">
             {loading ? (

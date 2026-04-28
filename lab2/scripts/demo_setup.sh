@@ -206,48 +206,9 @@ log "ConfigMap applied"
 # ── STEP 5: Deploy Infrastructure ─────────────────────────────
 header "Step 5: Deploy Infrastructure (MongoDB + Kafka)"
 
-# Deploy MongoDB without PVC (emptyDir for demo)
-cat <<EOF | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mongo
-  namespace: yelp-lab2
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mongo
-  template:
-    metadata:
-      labels:
-        app: mongo
-    spec:
-      containers:
-        - name: mongo
-          image: mongo:7
-          ports:
-            - containerPort: 27017
-          volumeMounts:
-            - name: mongo-data
-              mountPath: /data/db
-      volumes:
-        - name: mongo-data
-          emptyDir: {}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mongo
-  namespace: yelp-lab2
-spec:
-  selector:
-    app: mongo
-  ports:
-    - port: 27017
-      targetPort: 27017
-EOF
-log "MongoDB deployed"
+# Deploy MongoDB with persistent EBS volume (gp2 StorageClass)
+kubectl apply -f $K8S_DIR/deployment-mongo.yaml
+log "MongoDB deployed (with persistent EBS PVC)"
 
 kubectl apply -f $K8S_DIR/deployment-kafka.yaml
 log "Kafka deployed"
@@ -263,41 +224,13 @@ kubectl apply -f $K8S_DIR/deployment-gateway.yaml
 kubectl apply -f $K8S_DIR/deployment-frontend.yaml
 log "All services deployed"
 
-# ── STEP 7: Fix Security Groups ───────────────────────────────
-header "Step 7: Fix Security Groups"
-EKS_SG=$(aws ec2 describe-security-groups --region $REGION \
-    --query "SecurityGroups[?contains(GroupName,'eks-cluster-sg-$CLUSTER_NAME')].GroupId" \
-    --output text 2>/dev/null || echo "")
-
-LB_SG_FRONTEND=$(aws ec2 describe-security-groups --region $REGION \
-    --query "SecurityGroups[?contains(GroupName,'k8s-elb-af')].GroupId" \
-    --output text 2>/dev/null || echo "")
-
-LB_SG_GATEWAY=$(aws ec2 describe-security-groups --region $REGION \
-    --query "SecurityGroups[?contains(GroupName,'k8s-elb-a2')].GroupId" \
-    --output text 2>/dev/null || echo "")
-
-if [ -n "$EKS_SG" ] && [ -n "$LB_SG_FRONTEND" ]; then
-    aws ec2 authorize-security-group-ingress --region $REGION \
-        --group-id $EKS_SG --protocol tcp --port 30000 \
-        --source-group $LB_SG_FRONTEND 2>/dev/null || true
-fi
-
-if [ -n "$EKS_SG" ] && [ -n "$LB_SG_GATEWAY" ]; then
-    aws ec2 authorize-security-group-ingress --region $REGION \
-        --group-id $EKS_SG --protocol tcp --port 30080 \
-        --source-group $LB_SG_GATEWAY 2>/dev/null || true
-fi
-log "Security groups configured"
-
-# ── STEP 8: Wait for All Pods ─────────────────────────────────
-header "Step 8: Waiting for All Pods to be Running"
+# ── STEP 7: Wait for All Pods ─────────────────────────────────
+header "Step 7: Waiting for All Pods to be Running"
 info "This may take 3-5 minutes while ECR images are pulled..."
 
 for i in $(seq 1 30); do
     TOTAL=$(kubectl get pods -n $NAMESPACE --no-headers 2>/dev/null | wc -l | tr -d ' ')
     RUNNING=$(kubectl get pods -n $NAMESPACE --no-headers 2>/dev/null | grep -c "Running" || echo "0")
-    PENDING=$(kubectl get pods -n $NAMESPACE --no-headers 2>/dev/null | grep -c "Pending\|ContainerCreating\|Init" || echo "0")
     echo -ne "  Pods: $RUNNING Running / $TOTAL Total | Elapsed: $((i*10))s\r"
     if [ "$RUNNING" -ge 12 ]; then
         echo ""
@@ -311,53 +244,109 @@ for i in $(seq 1 30); do
     fi
 done
 
-# ── STEP 9: Seed Database ─────────────────────────────────────
-header "Step 9: Seeding Database with 300 Restaurants"
+# ── STEP 8: Wait for Gateway ALB DNS name ─────────────────────
+header "Step 8: Waiting for Gateway Load Balancer DNS"
+info "The AWS Load Balancer Controller will provision an NLB for the gateway..."
 
-# Start gateway port-forward in background
-kubectl port-forward -n $NAMESPACE svc/gateway 8000:8000 &
-GATEWAY_PF_PID=$!
-sleep 3
+GATEWAY_URL=""
+for i in $(seq 1 40); do
+    GATEWAY_URL=$(kubectl get svc gateway -n $NAMESPACE \
+        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+    if [ -n "$GATEWAY_URL" ]; then
+        log "Gateway NLB DNS: $GATEWAY_URL"
+        break
+    fi
+    echo -ne "  Waiting for gateway LB DNS... ${i}0s elapsed\r"
+    sleep 10
+    if [ $i -eq 40 ]; then
+        echo ""
+        warn "Gateway LB DNS not assigned after 400s. Falling back to port-forward for seeding."
+        GATEWAY_URL="localhost:8000"
+        kubectl port-forward -n $NAMESPACE svc/gateway 8000:8000 &
+        GATEWAY_PF_PID=$!
+        sleep 3
+    fi
+done
 
-# Run seed script
-python3 lab2/scripts/seed_data.py
+# ── STEP 9: Rebuild Frontend with real gateway URL ────────────
+header "Step 9: Rebuild Frontend Image with Gateway URL"
+
+if [ "$GATEWAY_URL" != "localhost:8000" ]; then
+    info "Rebuilding frontend with REACT_APP_API_URL=http://${GATEWAY_URL}:8000"
+
+    docker buildx build --platform linux/amd64 \
+        -t ${ECR_REPO}:frontend \
+        --build-arg REACT_APP_API_URL=http://${GATEWAY_URL}:8000 \
+        -f lab2/docker/Dockerfile.frontend --push .
+    log "Frontend image rebuilt with real gateway URL"
+
+    # Rolling restart so pods pick up the new image
+    kubectl rollout restart deployment/frontend -n $NAMESPACE
+    kubectl rollout status deployment/frontend -n $NAMESPACE --timeout=120s
+    log "Frontend pods restarted with new image"
+else
+    warn "Skipping frontend rebuild (no public gateway URL yet)"
+fi
+
+# ── STEP 10: Wait for Frontend ALB DNS name ───────────────────
+header "Step 10: Waiting for Frontend Load Balancer DNS"
+
+FRONTEND_URL=""
+for i in $(seq 1 40); do
+    FRONTEND_URL=$(kubectl get svc frontend -n $NAMESPACE \
+        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+    if [ -n "$FRONTEND_URL" ]; then
+        log "Frontend NLB DNS: $FRONTEND_URL"
+        break
+    fi
+    echo -ne "  Waiting for frontend LB DNS... ${i}0s elapsed\r"
+    sleep 10
+    if [ $i -eq 40 ]; then
+        echo ""
+        warn "Frontend LB DNS not assigned. Will use port-forward as fallback."
+        FRONTEND_URL=""
+    fi
+done
+
+# ── STEP 11: Seed Database ─────────────────────────────────────
+header "Step 11: Seeding Database with 300 Restaurants"
+
+# Use port-forward for seeding if gateway not yet public
+if [ "$GATEWAY_URL" = "localhost:8000" ]; then
+    SEED_URL="http://localhost:8000"
+else
+    # Seed via the real gateway — wait for it to be healthy first
+    info "Waiting 30s for NLB to become healthy before seeding..."
+    sleep 30
+    SEED_URL="http://${GATEWAY_URL}:8000"
+    kill $GATEWAY_PF_PID 2>/dev/null || true
+fi
+
+GATEWAY_API_URL=$SEED_URL python3 lab2/scripts/seed_data.py
 log "Database seeded!"
 
-# ── STEP 10: Start Port-Forwards for Demo ─────────────────────
-header "Step 10: Starting Port-Forwards for Demo"
-
-# Kill existing port-forwards
-kill $GATEWAY_PF_PID 2>/dev/null || true
-pkill -f "port-forward.*frontend" 2>/dev/null || true
+# Kill any lingering port-forwards from seeding
 pkill -f "port-forward.*gateway" 2>/dev/null || true
-sleep 1
-
-# Start fresh port-forwards
-kubectl port-forward -n $NAMESPACE svc/frontend 8080:80 &
-FRONTEND_PF_PID=$!
-
-kubectl port-forward -n $NAMESPACE svc/gateway 8000:8000 &
-GATEWAY_PF_PID=$!
-
-sleep 2
 
 # ── DONE ──────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║     🎉  DEMO IS READY!                           ║${NC}"
-echo -e "${GREEN}╠══════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║  🌐 App URL:    http://localhost:8080            ║${NC}"
-echo -e "${GREEN}║  🔌 API URL:    http://localhost:8000            ║${NC}"
-echo -e "${GREEN}║  👤 Test Login: test@yelp.com / Test1234!        ║${NC}"
-echo -e "${GREEN}║  🍴 Seed User:  seed@yelp.com / Seed1234!        ║${NC}"
-echo -e "${GREEN}╠══════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║  kubectl get pods -n yelp-lab2                  ║${NC}"
-echo -e "${GREEN}║  kubectl get svc  -n yelp-lab2                  ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║     🎉  DEMO IS READY!                                     ║${NC}"
+echo -e "${GREEN}╠════════════════════════════════════════════════════════════╣${NC}"
+if [ -n "$FRONTEND_URL" ]; then
+echo -e "${GREEN}║  🌐 App URL:    http://${FRONTEND_URL}         ║${NC}"
+else
+echo -e "${YELLOW}║  🌐 App URL:    (LB pending - run kubectl get svc -n yelp-lab2)║${NC}"
+fi
+if [ "$GATEWAY_URL" != "localhost:8000" ]; then
+echo -e "${GREEN}║  🔌 API URL:    http://${GATEWAY_URL}:8000     ║${NC}"
+else
+echo -e "${YELLOW}║  🔌 API URL:    http://localhost:8000 (port-forward)       ║${NC}"
+fi
+echo -e "${GREEN}║  👤 Test Login: test@yelp.com / Test1234!                  ║${NC}"
+echo -e "${GREEN}║  🍴 Seed User:  seed@yelp.com / Seed1234!                  ║${NC}"
+echo -e "${GREEN}╠════════════════════════════════════════════════════════════╣${NC}"
+echo -e "${GREEN}║  kubectl get svc -n yelp-lab2   (to see LB URLs)          ║${NC}"
+echo -e "${GREEN}║  kubectl get pods -n yelp-lab2                            ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${YELLOW}Port-forwards running in background (PIDs: Frontend=$FRONTEND_PF_PID, Gateway=$GATEWAY_PF_PID)${NC}"
-echo -e "${YELLOW}To stop: kill $FRONTEND_PF_PID $GATEWAY_PF_PID${NC}"
-echo ""
-
-# Keep script running to maintain port-forwards
-wait

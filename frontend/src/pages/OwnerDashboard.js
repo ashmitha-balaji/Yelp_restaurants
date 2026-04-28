@@ -40,7 +40,9 @@ function EditRestaurantModal({ restaurant, onClose, onSave }) {
     email: restaurant.email || '',
     website: restaurant.website || '',
     price_range: restaurant.price_range || '',
-    hours_of_operation: restaurant.hours_of_operation || '',
+    hours_of_operation: typeof restaurant.hours_of_operation === 'string'
+      ? restaurant.hours_of_operation
+      : (restaurant.hours_of_operation ? JSON.stringify(restaurant.hours_of_operation) : ''),
     amenities: restaurant.amenities || '',
     ambiance: restaurant.ambiance || '',
     dietary_options: restaurant.dietary_options || '',
@@ -628,8 +630,20 @@ export default function OwnerDashboard() {
                         </div>
                       )}
                       {selectedRestaurant.hours_of_operation && (
-                        <div className="flex items-center space-x-2 text-gray-600">
-                          <FiClock className="text-gray-400 flex-shrink-0" size={14} /><span>{selectedRestaurant.hours_of_operation}</span>
+                        <div className="flex items-start space-x-2 text-gray-600">
+                          <FiClock className="text-gray-400 flex-shrink-0 mt-1" size={14} />
+                          <span>
+                            {typeof selectedRestaurant.hours_of_operation === 'string'
+                              ? selectedRestaurant.hours_of_operation
+                              : ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+                                  .map((d) => {
+                                    const h = selectedRestaurant.hours_of_operation[d];
+                                    const closed = (selectedRestaurant.hours_of_operation.closed_days || []).includes(d);
+                                    return closed ? `${d}: Closed` : (h ? `${d}: ${h.open}-${h.close}` : null);
+                                  })
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                          </span>
                         </div>
                       )}
                       {selectedRestaurant.email && (

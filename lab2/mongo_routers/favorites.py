@@ -66,6 +66,16 @@ def add_favorite(data: FavoriteCreate, current_user: dict = Depends(get_current_
     return _fav_resp(doc, rest)
 
 
+@router.get("/check/{restaurant_id}")
+def check_favorite(restaurant_id: int, current_user: dict = Depends(get_current_user)):
+    """Return {is_favorite: bool} for the current user + given restaurant."""
+    db = get_db()
+    fav = db.favorites.find_one(
+        {"user_id": current_user["id"], "restaurant_id": restaurant_id}
+    )
+    return {"is_favorite": fav is not None, "restaurant_id": restaurant_id}
+
+
 @router.delete("/{restaurant_id}", status_code=204)
 def remove_favorite(restaurant_id: int, current_user: dict = Depends(get_current_user)):
     db = get_db()

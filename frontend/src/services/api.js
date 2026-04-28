@@ -121,6 +121,12 @@ export const reviewAPI = {
   create: (data) => api.post('/reviews/', data),
   update: (id, data) => api.put(`/reviews/${id}`, data),
   delete: (id) => api.delete(`/reviews/${id}`),
+  getJob: (jobId) => api.get(`/reviews/job/${jobId}`),
+  uploadPhoto: (reviewId, formData) =>
+    api.post(`/reviews/${reviewId}/photo`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  reply: (reviewId, reply) => api.post(`/reviews/${reviewId}/reply`, { reply }),
 };
 
 export const favoriteAPI = {
@@ -142,6 +148,26 @@ export const historyAPI = {
 export const ownerDashboardAPI = {
   getReviews: (params) => api.get('/owner-dashboard/reviews', { params }),
   getAnalytics: (params) => api.get('/owner-dashboard/analytics', { params }),
+};
+
+export const trendingAPI = {
+  list: (params = {}) => api.get('/restaurants/trending', { params }),
+};
+
+export const waitlistAPI = {
+  join: (restaurantId, payload) => api.post(`/waitlist/${restaurantId}`, payload),
+  status: (restaurantId) => api.get(`/waitlist/${restaurantId}/status`),
+  leave: (restaurantId) => api.delete(`/waitlist/${restaurantId}`),
+  ownerQueue: (restaurantId) => api.get(`/waitlist/${restaurantId}`),
+  callGuest: (restaurantId, userId) => api.post(`/waitlist/${restaurantId}/notify/${userId}`),
+};
+
+export const notificationAPI = {
+  unreadCount: () => api.get('/notifications/unread-count'),
+  list: (params = {}) => api.get('/notifications/', { params }),
+  markRead: (id) => api.put(`/notifications/${id}/read`),
+  markAllRead: () => api.put('/notifications/read-all'),
+  remove: (id) => api.delete(`/notifications/${id}`),
 };
 
 export default api;

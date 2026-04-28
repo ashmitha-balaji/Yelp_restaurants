@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from mongo_routers.reviews_async import router as reviews_router
+from mongo_routers.waitlist import router as waitlist_router
 
 app = FastAPI(title="Review Service", version="2.0.0")
 app.add_middleware(
@@ -24,6 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(reviews_router)
+app.include_router(waitlist_router)
 
 
 @app.get("/health")

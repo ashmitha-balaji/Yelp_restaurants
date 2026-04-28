@@ -8,8 +8,10 @@ Requires: requests library (pip install requests)
 import requests
 import random
 import sys
+import os
+import json
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = os.environ.get("GATEWAY_API_URL", "http://localhost:8000")
 
 SEED_USER = {
     "name": "Seed Admin",
@@ -26,6 +28,34 @@ CUISINES = [
 ]
 
 PRICE_RANGES = ["$", "$$", "$$$", "$$$$"]
+
+# Hours presets  (variety for filtering demos)
+def _make_hours(schedule: str) -> dict:
+    """Return an hours_of_operation dict for a named schedule."""
+    DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    if schedule == "all_day":
+        return {d: {"open": "07:00", "close": "23:00"} for d in DAYS}
+    if schedule == "lunch_only":
+        return {d: {"open": "11:00", "close": "15:00"} for d in DAYS}
+    if schedule == "dinner_only":
+        return {d: {"open": "17:00", "close": "22:00"} for d in DAYS}
+    if schedule == "late_night":
+        h = {d: {"open": "17:00", "close": "02:00"} for d in DAYS}
+        h["closed_days"] = ["Mon"]
+        return h
+    if schedule == "breakfast_brunch":
+        return {d: {"open": "07:00", "close": "14:00"} for d in DAYS}
+    # default: typical restaurant
+    h = {}
+    for d in ["Mon", "Tue", "Wed", "Thu"]:
+        h[d] = {"open": "11:00", "close": "22:00"}
+    for d in ["Fri", "Sat"]:
+        h[d] = {"open": "11:00", "close": "23:30"}
+    h["Sun"] = {"open": "12:00", "close": "21:00"}
+    return h
+
+HOURS_SCHEDULES = ["default", "default", "default", "all_day", "lunch_only",
+                   "dinner_only", "late_night", "breakfast_brunch"]
 
 ADJECTIVES = [
     "Golden", "Silver", "Royal", "Grand", "Little", "Big", "Happy",
@@ -247,6 +277,7 @@ def generate_restaurants(count=300):
         description = random.choice(descriptions)
         price_range = random.choice(PRICE_RANGES)
         phone = f"408-{random.randint(200,999)}-{random.randint(1000,9999)}"
+        schedule = random.choice(HOURS_SCHEDULES)
         restaurants.append({
             "name": name,
             "address": address,
@@ -258,6 +289,7 @@ def generate_restaurants(count=300):
             "state": state,
             "country": "US",
             "zip_code": zip_code,
+            "hours_of_operation": _make_hours(schedule),
         })
     return restaurants
 
